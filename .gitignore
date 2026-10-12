@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+venv/
+
+# Local secrets and generated runtime state
+.env
+logs/
+tmp/
+
+# Pipeline run receipts and generated analysis outputs must not be committed.
+data/runs/
+data/rejected/
+data_survey/**/*_sample.jsonl
+
+# Codex local workspace metadata
+.codex/
+.agents/

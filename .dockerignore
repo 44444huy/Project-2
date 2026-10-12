@@ -1,0 +1,21 @@
+.git/
+.codex/
+.agents/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Runtime data is bind-mounted or stored in Docker volumes, never baked in.
+data/
+data_survey/
+tmp/
+logs/
+
+# Documentation and tests are not required by the Spark runtime image.
+docs/
+tests/
+
+.env

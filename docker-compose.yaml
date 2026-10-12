@@ -1,0 +1,368 @@
+name: product-review-lakehouse
+
+services:
+  # PostgreSQL stores Polaris catalog metadata and query-ready serving tables.
+  postgres:
+    image: postgres:16-alpine
+    container_name: product_review_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POLARIS_DB_USER: "${POLARIS_DB_USER:?Set POLARIS_DB_USER in .env}"
+      POLARIS_DB_PASSWORD: "${POLARIS_DB_PASSWORD:?Set POLARIS_DB_PASSWORD in .env}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U review_user -d review_lakehouse
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Create the serving schema on every stack setup; safe with a persisted DB.
+  postgres-serving-setup:
+    image: postgres:16-alpine
+    container_name: product_review_postgres_serving_setup
+    restart: "no"
+    environment:
+      PGPASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - >
+        psql -h postgres -U review_user -d review_lakehouse
+        -v ON_ERROR_STOP=1
+        -c 'CREATE SCHEMA IF NOT EXISTS serving AUTHORIZATION review_user;'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Bootstrap the Polaris realm once against its persistent PostgreSQL store.
+  polaris-bootstrap:
+    image: apache/polaris-admin-tool:1.7.0
+    container_name: product_review_polaris_bootstrap
+    restart: "no"
+    environment:
+      POLARIS_PERSISTENCE_TYPE: "relational-jdbc"
+      QUARKUS_DATASOURCE_DB_KIND: "postgresql"
+      QUARKUS_DATASOURCE_USERNAME: "${POLARIS_DB_USER:?Set POLARIS_DB_USER in .env}"
+      QUARKUS_DATASOURCE_PASSWORD: "${POLARIS_DB_PASSWORD:?Set POLARIS_DB_PASSWORD in .env}"
+      QUARKUS_DATASOURCE_JDBC_URL: "jdbc:postgresql://postgres:5432/polaris"
+      POLARIS_REALM: "${POLARIS_REALM:?Set POLARIS_REALM in .env}"
+      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
+      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        set +e
+        /opt/jboss/container/java/run/run-java.sh \
+          bootstrap \
+          -r "$${POLARIS_REALM}" \
+          -c "$${POLARIS_REALM},$${POLARIS_CLIENT_ID},$${POLARIS_CLIENT_SECRET}"
+        bootstrap_status=$$?
+
+        if [ "$$bootstrap_status" -eq 0 ] || [ "$$bootstrap_status" -eq 3 ]; then
+          exit 0
+        fi
+
+        exit "$$bootstrap_status"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Polaris is the REST catalog; table files remain in MinIO.
+  polaris:
+    image: apache/polaris:1.7.0
+    container_name: product_review_polaris
+    restart: always
+    ports:
+      - "127.0.0.1:8181:8181"
+      - "127.0.0.1:8182:8182"
+    environment:
+      POLARIS_PERSISTENCE_TYPE: "relational-jdbc"
+      POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: "postgresql"
+      QUARKUS_DATASOURCE_USERNAME: "${POLARIS_DB_USER:?Set POLARIS_DB_USER in .env}"
+      QUARKUS_DATASOURCE_PASSWORD: "${POLARIS_DB_PASSWORD:?Set POLARIS_DB_PASSWORD in .env}"
+      QUARKUS_DATASOURCE_JDBC_URL: "jdbc:postgresql://postgres:5432/polaris"
+      POLARIS_REALM_CONTEXT_REALMS: "${POLARIS_REALM:?Set POLARIS_REALM in .env}"
+      QUARKUS_OTEL_SDK_DISABLED: "true"
+      polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
+      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": '["FILE","S3"]'
+      polaris.features."DROP_WITH_PURGE_ENABLED": "true"
+      polaris.readiness.ignore-severe-issues: "true"
+      AWS_REGION: "ap-southeast-1"
+      AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - http://localhost:8182/q/health
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      polaris-bootstrap:
+        condition: service_completed_successfully
+
+  # One MinIO instance stores both Raw objects and Iceberg table files.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: product_review_minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+      MINIO_SITE_REGION: "ap-southeast-1"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - http://127.0.0.1:9000/minio/health/live
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  # The shared lakehouse bucket contains raw/ and warehouse/ prefixes.
+  minio-setup:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: product_review_minio_setup
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - >
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing local/lakehouse &&
+        mc ls local/lakehouse
+
+  # Copy the fixed 5k source files into Raw using the official MinIO Client.
+  raw-setup:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: product_review_raw_setup
+    restart: "no"
+    volumes:
+      - ./data_survey/first_5000:/opt/project/data:ro
+    depends_on:
+      minio-setup:
+        condition: service_completed_successfully
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/reviews/Electronics.jsonl >/dev/null 2>&1 || \
+          mc cp /opt/project/data/reviews_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/reviews/Electronics.jsonl
+        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/products/meta_Electronics.jsonl >/dev/null 2>&1 || \
+          mc cp /opt/project/data/products_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/products/meta_Electronics.jsonl
+        mc ls --recursive local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000
+
+  # Create the product-review Polaris catalog idempotently.
+  polaris-catalog-setup:
+    image: python:3.12-alpine
+    container_name: product_review_polaris_catalog_setup
+    restart: "no"
+    environment:
+      POLARIS_BASE_URL: "${POLARIS_BASE_URL:?Set POLARIS_BASE_URL in .env}"
+      POLARIS_REALM: "${POLARIS_REALM:?Set POLARIS_REALM in .env}"
+      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
+      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
+      POLARIS_CATALOG_NAME: "${POLARIS_CATALOG_NAME:?Set POLARIS_CATALOG_NAME in .env}"
+      POLARIS_CATALOG_ROLE: "${POLARIS_CATALOG_ROLE:?Set POLARIS_CATALOG_ROLE in .env}"
+      POLARIS_WAREHOUSE: "${POLARIS_WAREHOUSE:?Set POLARIS_WAREHOUSE in .env}"
+      POLARIS_S3_ENDPOINT: "${POLARIS_S3_ENDPOINT:?Set POLARIS_S3_ENDPOINT in .env}"
+      POLARIS_S3_REGION: "${POLARIS_S3_REGION:?Set POLARIS_S3_REGION in .env}"
+    volumes:
+      - ./scripts/setup_polaris_catalog.py:/opt/setup/setup_polaris_catalog.py:ro
+    command:
+      - python
+      - /opt/setup/setup_polaris_catalog.py
+    depends_on:
+      polaris:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+
+  spark-ivy-init:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    container_name: product_review_spark_ivy_init
+    restart: "no"
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - chown -R 185:185 /tmp/.ivy2
+    volumes:
+      - spark_ivy_cache:/tmp/.ivy2
+
+  # Utility Spark container for ad hoc inspection and troubleshooting.
+  spark:
+    build:
+      context: .
+      dockerfile: spark/Dockerfile
+    image: product-review-spark:3.5.9
+    container_name: product_review_spark
+    restart: "no"
+    working_dir: /opt/project
+    command:
+      - sleep
+      - infinity
+    ports:
+      - "127.0.0.1:4040:4040"
+    volumes:
+      - ./src:/opt/project/src:ro
+      - ./config:/opt/project/config:ro
+      - spark_ivy_cache:/tmp/.ivy2
+    environment:
+      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
+      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+    depends_on:
+      spark-ivy-init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      polaris:
+        condition: service_healthy
+      polaris-catalog-setup:
+        condition: service_completed_successfully
+      raw-setup:
+        condition: service_completed_successfully
+
+  # One finite batch runner for Bronze -> Silver -> Gold -> Publish.
+  # The batch profile keeps data processing separate from infrastructure startup.
+  spark-pipeline:
+    profiles: ["batch"]
+    build:
+      context: .
+      dockerfile: spark/Dockerfile
+    image: product-review-spark:3.5.9
+    container_name: product_review_spark_pipeline
+    restart: "no"
+    working_dir: /opt/project
+    entrypoint:
+      - /opt/project/spark-entrypoint.sh
+      - /bin/sh
+      - /opt/project/scripts/run_batch_pipeline.sh
+    volumes:
+      - ./src:/opt/project/src:ro
+      - ./config:/opt/project/config:ro
+      - ./scripts/run_batch_pipeline.sh:/opt/project/scripts/run_batch_pipeline.sh:ro
+      - spark_ivy_cache:/tmp/.ivy2
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
+      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+    depends_on:
+      postgres-serving-setup:
+        condition: service_completed_successfully
+      spark-ivy-init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      polaris:
+        condition: service_healthy
+      polaris-catalog-setup:
+        condition: service_completed_successfully
+      raw-setup:
+        condition: service_completed_successfully
+
+  # Thin application layer: direct parameterized queries to PostgreSQL Serving.
+  dashboard:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: product-review-dashboard:1.0
+    container_name: product_review_dashboard
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+    ports:
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tests:
+    profiles: ["tools"]
+    image: product-review-spark:3.5.9
+    build:
+      context: .
+      dockerfile: spark/Dockerfile
+    working_dir: /opt/project
+    volumes:
+      - ./src:/opt/project/src:ro
+      - ./config:/opt/project/config:ro
+      - ./tests:/opt/project/tests:ro
+      - spark_ivy_cache:/tmp/.ivy2
+    environment:
+      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
+      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+    command:
+      - /opt/spark/bin/spark-submit
+      - /opt/project/tests/run_suite.py
+
+volumes:
+  postgres_data:
+  minio_data:
+  spark_ivy_cache:

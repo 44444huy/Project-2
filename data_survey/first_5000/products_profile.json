@@ -1,0 +1,161 @@
+{
+  "source_url": "https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main/raw/meta_categories/meta_Electronics.jsonl",
+  "sampling_method": "first N lines; not a representative sample",
+  "profiling_scope": "top-level fields",
+  "scanned_lines": 5000,
+  "valid_objects": 5000,
+  "invalid_lines": 0,
+  "sample_bytes": 18306599,
+  "fields": {
+    "author": {
+      "types": {
+        "NoneType": 2,
+        "dict": 2
+      },
+      "missing": 4996,
+      "null": 2,
+      "empty": 0,
+      "missing_or_null_pct": 99.96
+    },
+    "average_rating": {
+      "types": {
+        "float": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "bought_together": {
+      "types": {
+        "NoneType": 5000
+      },
+      "missing": 0,
+      "null": 5000,
+      "empty": 0,
+      "missing_or_null_pct": 100.0
+    },
+    "categories": {
+      "types": {
+        "list": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 362,
+      "missing_or_null_pct": 0.0
+    },
+    "description": {
+      "types": {
+        "list": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 2160,
+      "missing_or_null_pct": 0.0
+    },
+    "details": {
+      "types": {
+        "dict": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 12,
+      "missing_or_null_pct": 0.0
+    },
+    "features": {
+      "types": {
+        "list": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 1075,
+      "missing_or_null_pct": 0.0
+    },
+    "images": {
+      "types": {
+        "list": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "main_category": {
+      "types": {
+        "str": 4947,
+        "NoneType": 53
+      },
+      "missing": 0,
+      "null": 53,
+      "empty": 0,
+      "missing_or_null_pct": 1.06
+    },
+    "parent_asin": {
+      "types": {
+        "str": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "price": {
+      "types": {
+        "NoneType": 2862,
+        "float": 2138
+      },
+      "missing": 0,
+      "null": 2862,
+      "empty": 0,
+      "missing_or_null_pct": 57.24
+    },
+    "rating_number": {
+      "types": {
+        "int": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "store": {
+      "types": {
+        "str": 4965,
+        "NoneType": 35
+      },
+      "missing": 0,
+      "null": 35,
+      "empty": 0,
+      "missing_or_null_pct": 0.7
+    },
+    "subtitle": {
+      "types": {
+        "str": 3,
+        "NoneType": 1
+      },
+      "missing": 4996,
+      "null": 1,
+      "empty": 0,
+      "missing_or_null_pct": 99.94
+    },
+    "title": {
+      "types": {
+        "str": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "videos": {
+      "types": {
+        "list": 5000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 2881,
+      "missing_or_null_pct": 0.0
+    }
+  },
+  "parse_error_examples": []
+}

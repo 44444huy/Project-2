@@ -1,0 +1,112 @@
+import datetime
+import unittest
+
+from pyspark.sql import SparkSession
+
+from gold.build_product_review_gold import (
+    build_category_rating_metrics,
+    build_monthly_metrics,
+    build_product_metrics,
+    build_quality_summary,
+)
+
+
+class SimpleGoldJobTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.spark = (
+            SparkSession.builder
+            .master("local[2]")
+            .appName("simple-product-review-gold-tests")
+            .getOrCreate()
+        )
+        cls.spark.sparkContext.setLogLevel("ERROR")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.spark.stop()
+
+    def test_monthly_metrics(self):
+        reviews = self.spark.createDataFrame([
+            (datetime.datetime(2023, 1, 1), 1.0, True, 2),
+            (datetime.datetime(2023, 1, 2), 5.0, False, 0),
+            (datetime.datetime(2023, 2, 1), 4.0, True, 1),
+        ], "reviewed_at timestamp, rating double, verified_purchase boolean, helpful_vote long")
+
+        rows = build_monthly_metrics(reviews).orderBy("review_month").collect()
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].review_count, 2)
+        self.assertEqual(rows[0].low_rating_count, 1)
+        self.assertAlmostEqual(rows[0].low_rating_rate, 0.5)
+        self.assertAlmostEqual(rows[0].verified_purchase_rate, 0.5)
+
+    def test_product_metrics_keep_unmatched_reviews_and_products(self):
+        reviews = self.spark.createDataFrame([
+            ("P1", 1.0, True, 2),
+            ("P1", 5.0, False, 1),
+            ("P2", 4.0, True, 0),
+        ], "parent_asin string, rating double, verified_purchase boolean, helpful_vote long")
+        products = self.spark.createDataFrame([
+            ("x1", "P1", "One", "Electronics", "Store", None, 4.5, 10, [], "WARNING"),
+            ("x3", "P3", "Three", "Electronics", "Store", None, 4.0, 5, [], "WARNING"),
+        ], (
+            "record_id string, parent_asin string, title string, main_category string, "
+            "store string, price decimal(12,2), average_rating double, rating_number long, "
+            "categories array<string>, quality_status string"
+        ))
+
+        rows = {
+            row.parent_asin: row
+            for row in build_product_metrics(reviews, products).collect()
+        }
+
+        self.assertEqual(set(rows), {"P1", "P2", "P3"})
+        self.assertEqual(rows["P1"].review_count, 2)
+        self.assertTrue(rows["P1"].product_found)
+        self.assertFalse(rows["P2"].product_found)
+        self.assertFalse(rows["P3"].has_sample_reviews)
+
+    def test_category_metrics_keep_unmatched_group(self):
+        joined = self.spark.createDataFrame([
+            (False, None, 1.0, True),
+            (False, None, 5.0, False),
+            (True, "Electronics", 5.0, True),
+        ], "product_found boolean, main_category string, rating double, verified_purchase boolean")
+
+        rows = build_category_rating_metrics(joined).collect()
+        groups = {row.product_group for row in rows}
+
+        self.assertEqual(groups, {"UNMATCHED_PRODUCT", "Electronics"})
+        unmatched = [
+            row for row in rows
+            if row.product_group == "UNMATCHED_PRODUCT" and row.rating == 1
+        ][0]
+        self.assertEqual(unmatched.group_review_count, 2)
+
+    def test_quality_status_counts_are_not_inflated_by_multiple_issues(self):
+        reviews = self.spark.createDataFrame([
+            ("WARNING", ["A", "B"]),
+            ("PASS", []),
+        ], "quality_status string, quality_issues array<string>")
+        products = self.spark.createDataFrame([
+            ("WARNING", ["C"]),
+        ], "quality_status string, quality_issues array<string>")
+        rejected = self.spark.createDataFrame([], (
+            "source_name string, rejection_reasons array<string>"
+        ))
+
+        rows = build_quality_summary(reviews, products, rejected).collect()
+        lookup = {
+            (row.source_name, row.metric_type, row.metric_name): row.row_count
+            for row in rows
+        }
+
+        self.assertEqual(lookup[("reviews", "STATUS", "WARNING")], 1)
+        self.assertEqual(lookup[("reviews", "STATUS", "PASS")], 1)
+        self.assertEqual(lookup[("reviews", "ISSUE", "A")], 1)
+        self.assertEqual(lookup[("reviews", "ISSUE", "B")], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
