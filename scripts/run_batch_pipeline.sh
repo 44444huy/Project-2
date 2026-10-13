@@ -2,6 +2,32 @@
 
 set -eu
 
+SPARK_SUBMIT_BIN="${SPARK_SUBMIT_BIN:-/opt/spark/bin/spark-submit}"
+PIPELINE_MAX_ATTEMPTS="${PIPELINE_MAX_ATTEMPTS:-2}"
+PIPELINE_RETRY_DELAY_SECONDS="${PIPELINE_RETRY_DELAY_SECONDS:-5}"
+
+require_non_negative_integer() {
+  name="$1"
+  value="$2"
+
+  case "$value" in
+    ''|*[!0-9]*)
+      echo "$name must be a non-negative integer" >&2
+      exit 2
+      ;;
+  esac
+}
+
+require_non_negative_integer "PIPELINE_MAX_ATTEMPTS" "$PIPELINE_MAX_ATTEMPTS"
+require_non_negative_integer \
+  "PIPELINE_RETRY_DELAY_SECONDS" \
+  "$PIPELINE_RETRY_DELAY_SECONDS"
+
+if [ "$PIPELINE_MAX_ATTEMPTS" -lt 1 ]; then
+  echo "PIPELINE_MAX_ATTEMPTS must be at least 1" >&2
+  exit 2
+fi
+
 if [ "$#" -eq 0 ]; then
   set -- bronze silver gold publish
 fi
@@ -29,9 +55,31 @@ run_stage() {
       ;;
   esac
 
-  echo "=== Starting $stage ==="
-  /opt/spark/bin/spark-submit "$job"
-  echo "=== Completed $stage ==="
+  attempt=1
+  while [ "$attempt" -le "$PIPELINE_MAX_ATTEMPTS" ]; do
+    echo "=== Starting $stage (attempt $attempt/$PIPELINE_MAX_ATTEMPTS) ==="
+    if "$SPARK_SUBMIT_BIN" "$job"; then
+      echo "=== Completed $stage ==="
+      return 0
+    else
+      exit_code="$?"
+    fi
+
+    if [ "$attempt" -ge "$PIPELINE_MAX_ATTEMPTS" ]; then
+      echo \
+        "=== Failed $stage after $attempt attempt(s); exit code $exit_code ===" \
+        >&2
+      return "$exit_code"
+    fi
+
+    echo \
+      "=== $stage failed with exit code $exit_code; retrying in ${PIPELINE_RETRY_DELAY_SECONDS}s ===" \
+      >&2
+    if [ "$PIPELINE_RETRY_DELAY_SECONDS" -gt 0 ]; then
+      sleep "$PIPELINE_RETRY_DELAY_SECONDS"
+    fi
+    attempt=$((attempt + 1))
+  done
 }
 
 for stage in "$@"; do

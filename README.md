@@ -135,9 +135,15 @@ Run the complete finite batch pipeline:
 docker compose run --rm spark-pipeline
 ```
 
-The runner executes `bronze -> silver -> gold -> publish` in dependency order,
-starts a fresh Spark application for every stage, and stops immediately if a
-stage fails.
+The runner executes `bronze -> silver -> gold -> publish` in dependency order
+and starts a fresh Spark application for every stage. A failed stage is retried
+once by default; if both attempts fail, the runner stops before downstream
+stages. Configure the policy in `.env` with `PIPELINE_MAX_ATTEMPTS` and
+`PIPELINE_RETRY_DELAY_SECONDS`.
+
+Stage-level retries are safe for the current jobs: Bronze uses an insert-only
+idempotent `MERGE`, Silver and Gold use full-batch overwrite, and Publish
+replaces then reconciles each serving table.
 
 Running the same command again is safe: Bronze inserts only unseen `record_id`
 values, Silver and Gold rebuild deterministically, and Publish replaces the

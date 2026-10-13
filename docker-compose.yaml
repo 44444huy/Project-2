@@ -290,6 +290,8 @@ services:
       - spark_ivy_cache:/tmp/.ivy2
     environment:
       SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
+      PIPELINE_MAX_ATTEMPTS: "${PIPELINE_MAX_ATTEMPTS:-2}"
+      PIPELINE_RETRY_DELAY_SECONDS: "${PIPELINE_RETRY_DELAY_SECONDS:-5}"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
@@ -355,6 +357,7 @@ services:
       - ./src:/opt/project/src:ro
       - ./config:/opt/project/config:ro
       - ./tests:/opt/project/tests:ro
+      - ./scripts/run_batch_pipeline.sh:/opt/project/scripts/run_batch_pipeline.sh:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
       SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
