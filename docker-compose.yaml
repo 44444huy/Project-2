@@ -354,6 +354,11 @@ services:
       - ./tests:/opt/project/tests:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
       POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
