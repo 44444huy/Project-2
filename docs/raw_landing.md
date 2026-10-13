@@ -1,11 +1,12 @@
 # Raw landing
 
 MinIO is the Raw store for the project. The one-shot `raw-setup` service in
-`docker-compose.yaml` uses the official MinIO Client (`mc`) image to copy the
-two fixed 5,000-line JSONL samples into bucket `lakehouse`.
+`docker-compose.yaml` uses the official MinIO Client (`mc`) image to copy
+the selected first-N JSONL samples into bucket `lakehouse`.
 
-The local engineering sample has one stable location:
-`data_survey/first_5000/`. It is not a dataset-version directory.
+Each local engineering sample has a stable location:
+`data_survey/first_<N>/`, selected by `SAMPLE_SIZE`. It is not a
+dataset-version directory.
 
 ## Object layout
 
@@ -13,11 +14,11 @@ The local engineering sample has one stable location:
 s3://lakehouse/raw/<dataset_id>/samples/first_<N>/<source>/<file_name>
 ```
 
-Current objects:
+Example objects for `SAMPLE_SIZE=50000`:
 
 ```text
-s3://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/reviews/Electronics.jsonl
-s3://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/products/meta_Electronics.jsonl
+s3://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_50000/reviews/Electronics.jsonl
+s3://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_50000/products/meta_Electronics.jsonl
 ```
 
 The sample scope is part of the path so it cannot be confused with a future
@@ -27,7 +28,7 @@ checksums, manifests, landing receipts, dataset versions, or JSON run files.
 ## Idempotence
 
 Before copying, `raw-setup` runs `mc stat` on the destination. If the object is
-already present it is left unchanged, making the fixed-sample landing step
+already present it is left unchanged, making the selected-sample landing step
 idempotent.
 
 ## Storage zones

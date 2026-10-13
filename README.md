@@ -67,10 +67,9 @@ checksum manifest, landing receipt or JSON run registry.
 
 ## Current milestone
 
-The first milestone processes:
-
-- 5,000 review rows;
-- 5,000 product metadata rows.
+The default engineering batch processes 5,000 review rows and 5,000 product
+metadata rows. The same flow has also been validated with 50,000 rows from
+each source by setting `SAMPLE_SIZE=50000`.
 
 It writes:
 
@@ -89,20 +88,34 @@ It writes:
 - `serving.category_rating_metrics` in PostgreSQL;
 - `serving.data_quality_summary` in PostgreSQL.
 
-The Gold schemas are provisional 5k analytical models. Their counts and group
-coverage must be revalidated when the complete inputs replace the engineering
-samples.
+The Gold schemas have been validated with both 5k and 50k engineering samples.
+Their counts, group coverage, and partition sizes must still be revalidated when
+the complete inputs replace the first-N samples. See
+`docs/benchmark_50000.md` for the current scale test.
 
 ## Run
 
 Create a local environment file before starting the stack. This file is ignored
 by Git and must never be committed.
 
-Run: Copy-Item .env.example .env
+```powershell
+Copy-Item .env.example .env
+```
 
 Replace the placeholder credentials in .env with local development values.
 All PostgreSQL, Polaris, MinIO and Spark credentials are loaded from this file
 at runtime; .env.example intentionally contains no usable secrets.
+
+`SAMPLE_SIZE` selects the first-N batch and defaults to `5000`. To prepare and
+run a larger local sample:
+
+```powershell
+py -3 scripts/survey_data.py --limit 50000
+# Set SAMPLE_SIZE=50000 in .env, then continue with Docker Compose.
+```
+
+The generated JSONL samples remain outside Git; only their compact profiling
+results may be committed.
 
 Build the Spark image and start the shared services:
 
@@ -112,9 +125,9 @@ docker compose ps -a
 ```
 
 This starts PostgreSQL, bootstraps Polaris, starts MinIO, creates the
-`lakehouse` bucket, copies the 5k files to `raw/`, creates `review_catalog`, and
-starts the utility Spark container. One-shot setup services should finish with
-`Exited (0)`.
+`lakehouse` bucket, copies the configured sample to `raw/`, creates
+`review_catalog`, and starts the utility Spark container. One-shot setup
+services should finish with `Exited (0)`.
 
 Run the complete finite batch pipeline:
 
@@ -184,5 +197,4 @@ docker compose --profile tools run --rm --build tests
 - Review count is not sales volume.
 - Ratings of 1–2 are low ratings, not text-sentiment predictions.
 - Product `price` is a metadata-crawl snapshot, not the price at review time.
-- The first 5,000 lines are an engineering sample, not a representative sample.
-# Project-2
+- A first-N engineering sample is not a representative sample.

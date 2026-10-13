@@ -166,17 +166,18 @@ services:
         mc mb --ignore-existing local/lakehouse &&
         mc ls local/lakehouse
 
-  # Copy the fixed 5k source files into Raw using the official MinIO Client.
+  # Copy the configured finite sample into Raw using the official MinIO Client.
   raw-setup:
     image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: product_review_raw_setup
     restart: "no"
     volumes:
-      - ./data_survey/first_5000:/opt/project/data:ro
+      - ./data_survey/first_${SAMPLE_SIZE:-5000}:/opt/project/data:ro
     depends_on:
       minio-setup:
         condition: service_completed_successfully
     environment:
+      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
     entrypoint:
@@ -186,11 +187,11 @@ services:
       - |
         set -eu
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
-        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/reviews/Electronics.jsonl >/dev/null 2>&1 || \
-          mc cp /opt/project/data/reviews_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/reviews/Electronics.jsonl
-        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/products/meta_Electronics.jsonl >/dev/null 2>&1 || \
-          mc cp /opt/project/data/products_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/products/meta_Electronics.jsonl
-        mc ls --recursive local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000
+        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/reviews/Electronics.jsonl >/dev/null 2>&1 || \
+          mc cp /opt/project/data/reviews_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/reviews/Electronics.jsonl
+        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/products/meta_Electronics.jsonl >/dev/null 2>&1 || \
+          mc cp /opt/project/data/products_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/products/meta_Electronics.jsonl
+        mc ls --recursive local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}
 
   # Create the product-review Polaris catalog idempotently.
   polaris-catalog-setup:
@@ -250,6 +251,7 @@ services:
       - ./config:/opt/project/config:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
+      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
       POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
       POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
@@ -287,6 +289,7 @@ services:
       - ./scripts/run_batch_pipeline.sh:/opt/project/scripts/run_batch_pipeline.sh:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
+      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
@@ -354,6 +357,7 @@ services:
       - ./tests:/opt/project/tests:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
+      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"

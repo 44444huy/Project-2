@@ -12,8 +12,8 @@ creates Iceberg tables with SQL, and runs an insert-only SQL `MERGE`.
 and the two source descriptions. Spark reads these Raw objects:
 
 ```text
-s3a://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/reviews/Electronics.jsonl
-s3a://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_5000/products/meta_Electronics.jsonl
+s3a://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_<N>/reviews/Electronics.jsonl
+s3a://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_<N>/products/meta_Electronics.jsonl
 ```
 
 ## Tables
@@ -37,7 +37,7 @@ Silver.
 | `source_line_number` | One-based physical JSONL line number. |
 | `source_url` | Pinned upstream file URL. |
 | `source_reference` | Pinned upstream Git commit. |
-| `first_pipeline_run_id` | Label for the initial 5k batch. Kept on the existing Bronze schema. |
+| `first_pipeline_run_id` | Label derived from the configured first-N batch. Kept on the existing Bronze schema. |
 | `first_ingested_at_utc` | Timestamp when the row was first inserted. |
 | `raw_json` | Original JSONL line. |
 | `parse_status` | `parseable` or `malformed`. |
@@ -46,9 +46,9 @@ Silver.
 ## Rerun behavior
 
 The `record_id` does not depend on execution time. The Iceberg `MERGE` inserts
-only IDs that are not already present, so running the same 5k batch again does
-not duplicate rows.
+only IDs that are not already present, so running the same configured batch
+again does not duplicate rows.
 
-For each source the job checks that it read exactly 5,000 rows and prints the
-input, parseable, malformed, and final table counts. There is no custom run
+For each source the job checks that it read exactly `SAMPLE_SIZE` rows and
+prints the input, parseable, malformed, and final table counts. There is no custom run
 registry or checksum subsystem in the active path.

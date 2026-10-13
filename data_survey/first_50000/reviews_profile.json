@@ -1,0 +1,103 @@
+{
+  "source_url": "https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/2b6d039ed471f2ba5fd2acb718bf33b0a7e5598e/raw/review_categories/Electronics.jsonl",
+  "sampling_method": "first N lines; not a representative sample",
+  "profiling_scope": "top-level fields",
+  "sample_limit": 50000,
+  "scanned_lines": 50000,
+  "valid_objects": 50000,
+  "invalid_lines": 0,
+  "sample_bytes": 34362558,
+  "fields": {
+    "asin": {
+      "types": {
+        "str": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "helpful_vote": {
+      "types": {
+        "int": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "images": {
+      "types": {
+        "list": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 45780,
+      "missing_or_null_pct": 0.0
+    },
+    "parent_asin": {
+      "types": {
+        "str": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "rating": {
+      "types": {
+        "float": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "text": {
+      "types": {
+        "str": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "timestamp": {
+      "types": {
+        "int": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "title": {
+      "types": {
+        "str": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "user_id": {
+      "types": {
+        "str": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    },
+    "verified_purchase": {
+      "types": {
+        "bool": 50000
+      },
+      "missing": 0,
+      "null": 0,
+      "empty": 0,
+      "missing_or_null_pct": 0.0
+    }
+  },
+  "parse_error_examples": []
+}

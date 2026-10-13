@@ -4,6 +4,7 @@ from pathlib import Path
 
 from bronze.load_product_reviews_bronze import (
     build_bronze_dataframe,
+    configured_sample_size,
     load_dataset_config,
     raw_path,
 )
@@ -75,10 +76,17 @@ class SimpleBronzeJobTests(unittest.TestCase):
         )
         self.assertEqual(set(sources), {"reviews", "products"})
         self.assertEqual(
-            raw_path(dataset["dataset_id"], sources["reviews"]),
+            raw_path(dataset["dataset_id"], sources["reviews"], 5000),
             "s3a://lakehouse/raw/amazon_reviews_2023_electronics/"
             "samples/first_5000/reviews/Electronics.jsonl",
         )
+
+    def test_sample_size_must_be_a_positive_integer(self):
+        self.assertEqual(configured_sample_size("50000"), 50000)
+        for invalid_value in ("0", "-1", "abc", ""):
+            with self.subTest(invalid_value=invalid_value):
+                with self.assertRaises(ValueError):
+                    configured_sample_size(invalid_value)
 
 
 if __name__ == "__main__":

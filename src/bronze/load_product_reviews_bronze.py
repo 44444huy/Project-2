@@ -1,4 +1,5 @@
 import json
+import os
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -7,8 +8,24 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 CONFIG_PATH = "/opt/project/config/dataset.json"
 RAW_BUCKET = "lakehouse"
-SAMPLE_SIZE = 5000
-PIPELINE_RUN_ID = "first-5000-batch"
+DEFAULT_SAMPLE_SIZE = 5000
+
+
+def configured_sample_size(value=None):
+    raw_value = value if value is not None else os.environ.get(
+        "SAMPLE_SIZE", str(DEFAULT_SAMPLE_SIZE)
+    )
+    try:
+        sample_size = int(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("SAMPLE_SIZE must be a positive integer") from error
+    if sample_size <= 0:
+        raise ValueError("SAMPLE_SIZE must be a positive integer")
+    return sample_size
+
+
+SAMPLE_SIZE = configured_sample_size()
+PIPELINE_RUN_ID = f"first-{SAMPLE_SIZE}-batch"
 
 TABLES = {
     "reviews": "polaris.bronze.reviews_raw",
@@ -26,9 +43,12 @@ def load_dataset_config(path=CONFIG_PATH):
     return config, sources
 
 
-def raw_path(dataset_id, source):
+def raw_path(dataset_id, source, sample_size=None):
+    sample_size = (
+        SAMPLE_SIZE if sample_size is None else configured_sample_size(sample_size)
+    )
     return (
-        f"s3a://{RAW_BUCKET}/raw/{dataset_id}/samples/first_{SAMPLE_SIZE}/"
+        f"s3a://{RAW_BUCKET}/raw/{dataset_id}/samples/first_{sample_size}/"
         f"{source['name']}/{source['file_name']}"
     )
 

@@ -1,31 +1,61 @@
+import argparse
 import json
+import os
 from collections import Counter, defaultdict
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-LIMIT = 5000
-BASE = (
-    "https://huggingface.co/datasets/"
-    "McAuley-Lab/Amazon-Reviews-2023/resolve/main/"
-)
-SOURCES = {
-    "reviews": "raw/review_categories/Electronics.jsonl",
-    "products": "raw/meta_categories/meta_Electronics.jsonl",
-}
+
+DEFAULT_LIMIT = 5000
 
 
-def survey(name, source_path, output):
-    url = BASE + source_path
+def positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError("limit must be a positive integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("limit must be a positive integer")
+    return parsed
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Download and profile the first N Electronics rows per source."
+    )
+    parser.add_argument(
+        "--limit",
+        type=positive_int,
+        default=positive_int(os.environ.get("SAMPLE_SIZE", DEFAULT_LIMIT)),
+        help="rows per source (default: SAMPLE_SIZE or 5000)",
+    )
+    return parser.parse_args()
+
+
+def load_dataset_config(project):
+    config_path = project / "config" / "dataset.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    sources = {source["name"]: source for source in config["sources"]}
+    if set(sources) != {"reviews", "products"}:
+        raise ValueError("Dataset config must contain reviews and products")
+    return config, sources
+
+
+def survey(source, output, limit):
+    name = source["name"]
+    url = source["url"]
     present, nulls, empty = Counter(), Counter(), Counter()
     types = defaultdict(Counter)
     scanned = valid = invalid = 0
     errors = []
+    sample_path = output / f"{name}_sample.jsonl"
+    progress_interval = max(1000, min(10000, limit // 10))
 
-    print(f"\nReading {name}: first {LIMIT:,} lines...", flush=True)
+    print(f"\nReading {name}: first {limit:,} lines...", flush=True)
     request = Request(url, headers={"User-Agent": "Project2-data-survey/1.0"})
 
     with urlopen(request, timeout=90) as response:
-        with (output / f"{name}_sample.jsonl").open("wb") as sample:
+        with sample_path.open("wb") as sample:
             for raw_line in response:
                 scanned += 1
                 sample.write(raw_line)
@@ -48,22 +78,23 @@ def survey(name, source_path, output):
                         elif value == "" or value == [] or value == {}:
                             empty[field] += 1
 
-                if scanned % 1000 == 0:
+                if scanned % progress_interval == 0:
                     print(f"  {name}: {scanned:,} lines", flush=True)
-                if scanned >= LIMIT:
+                if scanned >= limit:
                     break
 
-    if scanned == 0:
-        raise ValueError(f"{name}: source returned no data")
+    if scanned != limit:
+        raise ValueError(f"{name}: expected {limit:,} lines, received {scanned:,}")
 
     profile = {
         "source_url": url,
         "sampling_method": "first N lines; not a representative sample",
         "profiling_scope": "top-level fields",
+        "sample_limit": limit,
         "scanned_lines": scanned,
         "valid_objects": valid,
         "invalid_lines": invalid,
-        "sample_bytes": (output / f"{name}_sample.jsonl").stat().st_size,
+        "sample_bytes": sample_path.stat().st_size,
         "fields": {
             field: {
                 "types": dict(types[field]),
@@ -87,53 +118,62 @@ def survey(name, source_path, output):
     return profile
 
 
+def build_report(profiles, limit):
+    report = [
+        f"# Amazon Electronics: first {limit:,} rows profiling",
+        "",
+        "Samples contain the first N lines, not a random sample.",
+        "Missing/null percentages use valid JSON objects as denominator.",
+        "Independent samples cannot measure full-dataset join coverage.",
+        "",
+    ]
+    for name, profile in profiles.items():
+        report.extend([
+            f"## {name}",
+            "",
+            f"Scanned: {profile['scanned_lines']}; "
+            f"valid: {profile['valid_objects']}; "
+            f"invalid: {profile['invalid_lines']}.",
+            "",
+            "| Field | Types | Missing | Null | Empty | Missing/null % |",
+            "| --- | --- | ---: | ---: | ---: | ---: |",
+        ])
+        for field, info in profile["fields"].items():
+            label = field.replace("|", r"\|").replace("\n", " ")
+            observed = ", ".join(
+                f"{kind}: {count}" for kind, count in info["types"].items()
+            )
+            report.append(
+                f"| {label} | {observed} | {info['missing']} | "
+                f"{info['null']} | {info['empty']} | "
+                f"{info['missing_or_null_pct']} |"
+            )
+        report.append("")
+    return "\n".join(report)
+
+
 def main():
+    args = parse_args()
     project = Path(__file__).resolve().parent.parent
-    output = project / "data_survey" / "first_5000"
-    output.mkdir(parents=True, exist_ok=False)
+    output = project / "data_survey" / f"first_{args.limit}"
+    if output.exists():
+        print(f"FAILED: output already exists: {output}", flush=True)
+        return 2
+
+    output.mkdir(parents=True)
     try:
+        _, sources = load_dataset_config(project)
         profiles = {
-            name: survey(name, path, output)
-            for name, path in SOURCES.items()
+            name: survey(sources[name], output, args.limit)
+            for name in ("reviews", "products")
         }
-
-        report = [
-            "# Amazon Electronics: initial data profiling",
-            "",
-            "Samples contain the first N lines, not a random sample.",
-            "Missing/null percentages use valid JSON objects as denominator.",
-            "Independent samples cannot measure full-dataset join coverage.",
-            "",
-        ]
-        for name, profile in profiles.items():
-            report.extend([
-                f"## {name}",
-                "",
-                f"Scanned: {profile['scanned_lines']}; "
-                f"valid: {profile['valid_objects']}; "
-                f"invalid: {profile['invalid_lines']}.",
-                "",
-                "| Field | Types | Missing | Null | Empty | Missing/null % |",
-                "| --- | --- | ---: | ---: | ---: | ---: |",
-            ])
-            for field, info in profile["fields"].items():
-                label = field.replace("|", r"\|").replace("\n", " ")
-                observed = ", ".join(
-                    f"{kind}: {count}" for kind, count in info["types"].items()
-                )
-                report.append(
-                    f"| {label} | {observed} | {info['missing']} | "
-                    f"{info['null']} | {info['empty']} | "
-                    f"{info['missing_or_null_pct']} |"
-                )
-            report.append("")
-
         (output / "summary.md").write_text(
-            "\n".join(report), encoding="utf-8"
+            build_report(profiles, args.limit), encoding="utf-8"
         )
     except Exception as error:
         print(f"\nFAILED: {error}\nPartial files: {output}", flush=True)
         return 1
+
     print(f"\nDONE. Results: {output}", flush=True)
     return 0
 
