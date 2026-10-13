@@ -2,7 +2,11 @@ import unittest
 
 from pyspark.sql import SparkSession
 
-from serving.publish_gold_to_postgres import prepare_for_postgres
+from serving.publish_gold_to_postgres import (
+    assert_reconciled,
+    prepare_for_postgres,
+    reconciliation_metrics,
+)
 
 
 class SimpleServingJobTests(unittest.TestCase):
@@ -43,6 +47,41 @@ class SimpleServingJobTests(unittest.TestCase):
             "polaris.gold.monthly_review_metrics",
         )
         self.assertEqual(result.columns, ["review_count"])
+
+    def test_reconciliation_metrics_cover_grain_and_totals(self):
+        dataframe = self.spark.createDataFrame(
+            [("A", 2), ("A", 3), (None, 4)],
+            "grain string, review_count long",
+        )
+        metrics = reconciliation_metrics(
+            dataframe,
+            key_columns=["grain"],
+            sum_columns=["review_count"],
+        )
+        self.assertEqual(metrics["row_count"], 3)
+        self.assertEqual(metrics["distinct_key_count"], 1)
+        self.assertEqual(metrics["null_key_rows"], 1)
+        self.assertEqual(metrics["review_count_sum"], 9)
+
+    def test_reconciliation_detects_changed_totals(self):
+        source = self.spark.createDataFrame(
+            [("A", 2), ("B", 3)],
+            "grain string, review_count long",
+        )
+        published = self.spark.createDataFrame(
+            [("A", 2), ("B", 4)],
+            "grain string, review_count long",
+        )
+        with self.assertRaisesRegex(RuntimeError, "review_count_sum"):
+            assert_reconciled(
+                source,
+                published,
+                "serving.example",
+                {
+                    "key_columns": ["grain"],
+                    "sum_columns": ["review_count"],
+                },
+            )
 
 
 if __name__ == "__main__":

@@ -21,14 +21,17 @@ path. Product `categories` is therefore published as the JSON text column
 ## Publication behavior
 
 Each target table is replaced rather than appended. After every write, Spark
-reads the target table and compares its row count with the source Gold table.
-A mismatch fails the job. On the 5k milestone both the first and second runs
-produced the same counts:
+reads the target table and compares it with the source Gold table at three
+levels:
 
-- monthly: 182;
-- product: 9,474;
-- category/rating: 22;
-- data quality: 12.
+- total row count;
+- non-null and unique grain keys;
+- aggregate totals such as review, low-rating, verified-purchase, helpful-vote,
+  and quality row counts.
+
+Any mismatch fails the job. The validated 50k publication produced 236 monthly
+rows, 81,998 product rows, 97 category/rating rows, and 12 data-quality rows.
+The review-bearing marts each reconciled back to 50,000 input reviews.
 
 ## Transaction boundary
 
@@ -39,7 +42,7 @@ the already-written tables may be newer than the remaining tables. The job
 must be rerun after the cause is fixed; its replace behavior restores a
 consistent set from the same Gold state.
 
-For the fixed 5k milestone this direct implementation is intentionally kept
+For the finite local batch this direct implementation is intentionally kept
 simple. If concurrent dashboard availability becomes a requirement, the next
 design step is staging tables plus one PostgreSQL transaction that swaps or
 renames the complete table set.
