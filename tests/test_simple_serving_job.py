@@ -4,9 +4,48 @@ from pyspark.sql import SparkSession
 
 from serving.publish_gold_to_postgres import (
     assert_reconciled,
+    atomic_swap_statements,
+    execute_transaction,
     prepare_for_postgres,
     reconciliation_metrics,
+    staging_table_name,
 )
+
+
+class FakeStatement:
+    def __init__(self, connection):
+        self.connection = connection
+        self.closed = False
+
+    def execute(self, sql):
+        self.connection.executed.append(sql)
+        if sql == self.connection.fail_on:
+            raise RuntimeError("simulated transaction failure")
+
+    def close(self):
+        self.closed = True
+
+
+class FakeConnection:
+    def __init__(self, fail_on=None):
+        self.fail_on = fail_on
+        self.executed = []
+        self.auto_commit_values = []
+        self.committed = False
+        self.rolled_back = False
+        self.statement = FakeStatement(self)
+
+    def setAutoCommit(self, value):
+        self.auto_commit_values.append(value)
+
+    def createStatement(self):
+        return self.statement
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
 
 
 class SimpleServingJobTests(unittest.TestCase):
@@ -23,6 +62,54 @@ class SimpleServingJobTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.spark.stop()
+
+    def test_staging_table_name_is_stable_and_schema_scoped(self):
+        self.assertEqual(
+            staging_table_name("serving.monthly_review_metrics"),
+            "serving.monthly_review_metrics__staging",
+        )
+        with self.assertRaisesRegex(ValueError, "schema.table"):
+            staging_table_name("monthly_review_metrics")
+
+    def test_atomic_swap_renames_all_tables_before_dropping_previous(self):
+        staged = {
+            "serving.monthly": "serving.monthly__staging",
+            "serving.product": "serving.product__staging",
+        }
+        statements = atomic_swap_statements(staged)
+
+        self.assertEqual(
+            statements[:3],
+            [
+                'DROP TABLE IF EXISTS "serving"."monthly__previous"',
+                'ALTER TABLE IF EXISTS "serving"."monthly" '
+                'RENAME TO "monthly__previous"',
+                'ALTER TABLE "serving"."monthly__staging" '
+                'RENAME TO "monthly"',
+            ],
+        )
+        self.assertEqual(
+            statements[-2:],
+            [
+                'DROP TABLE IF EXISTS "serving"."monthly__previous"',
+                'DROP TABLE IF EXISTS "serving"."product__previous"',
+            ],
+        )
+
+    def test_transaction_rolls_back_on_swap_failure(self):
+        connection = FakeConnection(fail_on="second statement")
+
+        with self.assertRaisesRegex(RuntimeError, "simulated"):
+            execute_transaction(
+                connection,
+                ["first statement", "second statement", "third statement"],
+            )
+
+        self.assertFalse(connection.committed)
+        self.assertTrue(connection.rolled_back)
+        self.assertEqual(connection.executed, ["first statement", "second statement"])
+        self.assertEqual(connection.auto_commit_values, [False, True])
+        self.assertTrue(connection.statement.closed)
 
     def test_product_categories_are_serialized_as_json(self):
         source = self.spark.createDataFrame([

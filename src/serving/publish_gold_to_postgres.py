@@ -21,6 +21,13 @@ TABLES = {
     "polaris.gold.data_quality_summary": "serving.data_quality_summary",
 }
 
+PUBLISH_LOCK_SQL = (
+    "SELECT pg_advisory_lock(hashtext('product-review-serving-publish'))"
+)
+PUBLISH_UNLOCK_SQL = (
+    "SELECT pg_advisory_unlock(hashtext('product-review-serving-publish'))"
+)
+
 RECONCILIATION_RULES = {
     "polaris.gold.monthly_review_metrics": {
         "key_columns": ["review_month"],
@@ -86,7 +93,7 @@ def assert_reconciled(source, published, target_table, rules):
 
     for label, metrics in (
         ("Gold source", source_metrics),
-        ("PostgreSQL target", published_metrics),
+        ("PostgreSQL staging", published_metrics),
     ):
         if metrics["null_key_rows"] != 0:
             raise RuntimeError(
@@ -108,10 +115,100 @@ def assert_reconciled(source, published, target_table, rules):
         }
         raise RuntimeError(
             f"{target_table}: reconciliation mismatch "
-            f"(Gold, PostgreSQL) = {differences}"
+            f"(Gold, PostgreSQL staging) = {differences}"
         )
 
     return published_metrics
+
+
+def qualified_table_parts(table_name):
+    parts = table_name.split(".")
+    if len(parts) != 2 or any(not part for part in parts):
+        raise ValueError(f"Expected schema.table, received: {table_name}")
+    return parts
+
+
+def quote_identifier(identifier):
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def quote_table(table_name):
+    return ".".join(
+        quote_identifier(part) for part in qualified_table_parts(table_name)
+    )
+
+
+def staging_table_name(target_table):
+    schema, table = qualified_table_parts(target_table)
+    staging = f"{table}__staging"
+    if len(staging) > 63:
+        raise ValueError(f"PostgreSQL staging identifier is too long: {staging}")
+    return f"{schema}.{staging}"
+
+
+def atomic_swap_statements(staged_tables):
+    statements = []
+    previous_tables = []
+
+    for target_table, staging_table in staged_tables.items():
+        target_schema, target_name = qualified_table_parts(target_table)
+        staging_schema, staging_name = qualified_table_parts(staging_table)
+        if target_schema != staging_schema:
+            raise ValueError("Staging and target tables must use the same schema")
+
+        previous_name = f"{target_name}__previous"
+        if len(previous_name) > 63:
+            raise ValueError(
+                f"PostgreSQL previous identifier is too long: {previous_name}"
+            )
+        previous_table = f"{target_schema}.{previous_name}"
+        previous_tables.append(previous_table)
+
+        statements.extend([
+            f"DROP TABLE IF EXISTS {quote_table(previous_table)}",
+            f"ALTER TABLE IF EXISTS {quote_table(target_table)} "
+            f"RENAME TO {quote_identifier(previous_name)}",
+            f"ALTER TABLE {quote_table(staging_table)} "
+            f"RENAME TO {quote_identifier(target_name)}",
+        ])
+
+    statements.extend(
+        f"DROP TABLE IF EXISTS {quote_table(previous_table)}"
+        for previous_table in previous_tables
+    )
+    return statements
+
+
+def execute_statements(connection, statements):
+    statement = connection.createStatement()
+    try:
+        for sql in statements:
+            statement.execute(sql)
+    finally:
+        statement.close()
+
+
+def execute_transaction(connection, statements):
+    connection.setAutoCommit(False)
+    try:
+        execute_statements(connection, statements)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.setAutoCommit(True)
+
+
+def open_postgres_connection(spark):
+    spark._jvm.org.apache.spark.sql.execution.datasources.jdbc.DriverRegistry.register(
+        JDBC_OPTIONS["driver"]
+    )
+    return spark._jvm.java.sql.DriverManager.getConnection(
+        JDBC_URL,
+        JDBC_OPTIONS["user"],
+        JDBC_OPTIONS["password"],
+    )
 
 
 def write_jdbc(dataframe, target_table):
@@ -141,36 +238,80 @@ def read_jdbc(spark, target_table):
     )
 
 
+def metric_summary(metrics):
+    return ", ".join(
+        f"{name}={value}"
+        for name, value in metrics.items()
+        if name.endswith("_sum")
+    )
+
+
 def main():
     spark = SparkSession.builder.appName("publish-gold-to-postgres").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
 
+    staged_tables = {
+        target_table: staging_table_name(target_table)
+        for target_table in TABLES.values()
+    }
+    connection = None
+
     try:
+        connection = open_postgres_connection(spark)
+        execute_statements(connection, [PUBLISH_LOCK_SQL])
+
+        staged_metrics = {}
         for source_table, target_table in TABLES.items():
+            staging_table = staged_tables[target_table]
             outgoing = prepare_for_postgres(
                 spark.table(source_table),
                 source_table,
             ).cache()
-            write_jdbc(outgoing, target_table)
-            published = read_jdbc(spark, target_table)
-            metrics = assert_reconciled(
-                outgoing,
-                published,
-                target_table,
-                RECONCILIATION_RULES[source_table],
-            )
+            try:
+                write_jdbc(outgoing, staging_table)
+                staging = read_jdbc(spark, staging_table)
+                metrics = assert_reconciled(
+                    outgoing,
+                    staging,
+                    target_table,
+                    RECONCILIATION_RULES[source_table],
+                )
+                staged_metrics[target_table] = metrics
+                print(
+                    f"Staged {source_table} -> {staging_table}: "
+                    f"{metrics['row_count']} rows; {metric_summary(metrics)}"
+                )
+            finally:
+                outgoing.unpersist()
 
-            checked_sums = ", ".join(
-                f"{name}={value}"
-                for name, value in metrics.items()
-                if name.endswith("_sum")
-            )
+        execute_transaction(
+            connection,
+            atomic_swap_statements(staged_tables),
+        )
+
+        for source_table, target_table in TABLES.items():
+            metrics = staged_metrics[target_table]
             print(
                 f"Published {source_table} -> {target_table}: "
-                f"{metrics['row_count']} rows; {checked_sums}"
+                f"{metrics['row_count']} rows; {metric_summary(metrics)}"
             )
-            outgoing.unpersist()
     finally:
+        if connection is not None:
+            try:
+                execute_transaction(
+                    connection,
+                    [
+                        f"DROP TABLE IF EXISTS {quote_table(staging_table)}"
+                        for staging_table in staged_tables.values()
+                    ],
+                )
+            except Exception as cleanup_error:
+                print(f"WARNING: failed to clean staging tables: {cleanup_error}")
+            try:
+                execute_statements(connection, [PUBLISH_UNLOCK_SQL])
+            except Exception as unlock_error:
+                print(f"WARNING: failed to release publish lock: {unlock_error}")
+            connection.close()
         spark.stop()
 
 

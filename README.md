@@ -143,7 +143,7 @@ stages. Configure the policy in `.env` with `PIPELINE_MAX_ATTEMPTS` and
 
 Stage-level retries are safe for the current jobs: Bronze uses an insert-only
 idempotent `MERGE`, Silver and Gold use full-batch overwrite, and Publish
-replaces then reconciles each serving table.
+stages, reconciles, then atomically swaps the complete serving table set.
 
 Running the same command again is safe: Bronze inserts only unseen `record_id`
 values, Silver and Gold rebuild deterministically, and Publish replaces the
@@ -162,10 +162,10 @@ utility `spark` container remains available for troubleshooting:
 docker compose exec spark /opt/spark/bin/spark-submit /opt/project/src/silver/build_product_reviews_silver.py
 ```
 
-The publisher replaces each serving table and reads it back to verify that its
-row count matches the corresponding Iceberg Gold table. A rerun replaces rows;
-it does not append duplicates. See `docs/serving_contract.md` for the serving
-boundary and its transaction limitation.
+The publisher writes and reconciles all four staging tables before replacing
+the live Serving set in one PostgreSQL transaction. A rerun replaces rows; it
+does not append duplicates. See `docs/serving_contract.md` for the exact
+Serving and Iceberg transaction boundaries.
 
 Start the dashboard after publication:
 

@@ -20,29 +20,33 @@ path. Product `categories` is therefore published as the JSON text column
 
 ## Publication behavior
 
-Each target table is replaced rather than appended. After every write, Spark
-reads the target table and compares it with the source Gold table at three
-levels:
+The publisher takes a PostgreSQL advisory lock so two publish runs cannot
+modify the deterministic staging names at the same time. Spark writes all four
+Gold outputs to `serving.<table>__staging`; the dashboard continues reading the
+existing target tables during this phase.
+
+Every staging table is compared with its Gold source at three levels:
 
 - total row count;
 - non-null and unique grain keys;
 - aggregate totals such as review, low-rating, verified-purchase, helpful-vote,
   and quality row counts.
 
-Any mismatch fails the job. The validated 50k publication produced 236 monthly
-rows, 81,998 product rows, 97 category/rating rows, and 12 data-quality rows.
-The review-bearing marts each reconciled back to 50,000 input reviews.
+Any mismatch stops publication before the live tables are changed. The
+validated 50k publication produced 236 monthly rows, 81,998 product rows, 97
+category/rating rows, and 12 data-quality rows. The review-bearing marts each
+reconciled back to 50,000 input reviews.
 
 ## Transaction boundary
 
-The four JDBC overwrites are four separate table operations. They are not one
-distributed transaction with the Iceberg reads and are not one atomic
-PostgreSQL transaction covering all four tables. If publication fails midway,
-the already-written tables may be newer than the remaining tables. The job
-must be rerun after the cause is fixed; its replace behavior restores a
-consistent set from the same Gold state.
+After all four staging tables pass reconciliation, PostgreSQL renames the
+current targets to temporary previous names, renames all staging tables to the
+live names, and drops the previous tables in one transaction. Readers therefore
+see either the complete old table set or the complete new table set. A swap
+error is rolled back, leaving the old set intact; leftover staging tables are
+cleaned before the job exits.
 
-For the finite local batch this direct implementation is intentionally kept
-simple. If concurrent dashboard availability becomes a requirement, the next
-design step is staging tables plus one PostgreSQL transaction that swaps or
-renames the complete table set.
+This guarantee covers the four PostgreSQL Serving tables only. It is not a
+distributed transaction with the preceding Iceberg Gold reads. The normal batch
+order and publisher lock prevent another project publish run from overlapping,
+while idempotent replacement allows a failed batch to be rerun safely.
