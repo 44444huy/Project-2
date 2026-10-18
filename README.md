@@ -1,13 +1,15 @@
 # Product Review Lakehouse
 
-Batch lakehouse for the Electronics subset of Amazon Reviews 2023. It
-processes a fixed pair of JSONL files as a finite local engineering batch.
+Batch lakehouse for the Electronics subset of Amazon Reviews 2023. It supports
+small first-N samples, a verified one-million-review profile, and the complete
+source snapshot through the same finite batch pipeline.
 
 ## Current flow
 
 ```text
-JSONL samples
+Amazon Reviews JSONL source objects
     -> MinIO Client copies files to lakehouse/raw/
+    -> Airflow runs one finite batch at a time
     -> Spark reads Raw
     -> Spark SQL creates and merges Iceberg Bronze tables
     -> Spark parses, validates and normalizes Silver tables
@@ -16,6 +18,7 @@ JSONL samples
     -> Gold Iceberg tables registered in Polaris
        -> Iceberg files in lakehouse/warehouse/
        -> Spark JDBC -> PostgreSQL serving -> Streamlit dashboard
+    -> Airflow records run configuration, counts, snapshots and status
 ```
 
 MinIO is one object-storage service with one bucket:
@@ -33,24 +36,28 @@ lakehouse/
 ```text
 docker-compose.yaml
 app/dashboard.py
+airflow/
+└── dags/product_review_lakehouse.py
 postgres/init/00_create_polaris_database.sql
 scripts/
-├── run_batch_pipeline.sh
+├── download_full_dataset.py
+├── render_spark_config.sh
 └── setup_polaris_catalog.py
 spark/
 ├── Dockerfile
-└── conf/spark-defaults.conf
+└── conf/spark-defaults.conf.template
 src/
 ├── bronze/load_product_reviews_bronze.py
 ├── silver/build_product_reviews_silver.py
 ├── gold/build_product_review_gold.py
-└── serving/publish_gold_to_postgres.py
+├── serving/publish_gold_to_postgres.py
+└── operations/finalize_pipeline_run.py
 tests/
 ```
 
 The active Bronze job keeps its processing steps explicit:
 
-1. Load the small JSON dataset config.
+1. Load the JSON dataset config and selected processing scope.
 2. Read each Raw JSONL object with Spark.
 3. Add lineage columns and a deterministic `record_id`.
 4. Run explicit `CREATE TABLE IF NOT EXISTS` SQL.
@@ -62,14 +69,16 @@ file, without a registry, plugin framework, or extra Python dependency. It
 normalizes whitespace and builds compact issue arrays with `F.filter`.
 
 Raw landing uses the official MinIO Client image in the one-shot `raw-setup`
-service. The active runtime therefore does not require a custom S3 client,
-checksum manifest, landing receipt or JSON run registry.
+service. The complete source is downloaded in resumable gzip parts with
+SHA-256 manifests before those parts are landed. Smaller profiles read a
+bounded number of rows from that same immutable Raw snapshot.
 
 ## Current milestone
 
-The default engineering batch processes 5,000 review rows and 5,000 product
-metadata rows. The same flow has also been validated with 50,000 rows from
-each source by setting `SAMPLE_SIZE=50000`.
+The current verified profile processes exactly 1,000,000 reviews from the first
+full-source parts together with all 1,610,012 product metadata rows. The full
+Raw source remains in MinIO, so the same pipeline can later be run in `full`
+mode without downloading the dataset again.
 
 It writes:
 
@@ -81,17 +90,18 @@ It writes:
 - `polaris.silver.review_product`.
 - `polaris.gold.monthly_review_metrics`;
 - `polaris.gold.product_review_metrics`;
+- `polaris.gold.product_monthly_review_metrics`;
 - `polaris.gold.category_rating_metrics`;
 - `polaris.gold.data_quality_summary`.
 - `serving.monthly_review_metrics` in PostgreSQL;
 - `serving.product_review_metrics` in PostgreSQL;
+- `serving.product_monthly_review_metrics` in PostgreSQL;
 - `serving.category_rating_metrics` in PostgreSQL;
 - `serving.data_quality_summary` in PostgreSQL.
 
-The Gold schemas have been validated with both 5k and 50k engineering samples.
-Their counts, group coverage, and partition sizes must still be revalidated when
-the complete inputs replace the first-N samples. See
-`docs/benchmark_50000.md` for the current scale test.
+The one-million-review run completed all stages and published the five Gold
+marts to PostgreSQL. See `docs/benchmark_1000000.md` for the current verified
+results. `docs/benchmark_50000.md` is retained as an earlier scale-test record.
 
 ## Run
 
@@ -106,75 +116,67 @@ Replace the placeholder credentials in .env with local development values.
 All PostgreSQL, Polaris, MinIO and Spark credentials are loaded from this file
 at runtime; .env.example intentionally contains no usable secrets.
 
-`SAMPLE_SIZE` selects the first-N batch and defaults to `5000`. To prepare and
-run a larger local sample:
+`DATA_MODE` selects the input scope:
+
+- `sample`: read the first N rows from the full Raw snapshot, controlled by
+  `SAMPLE_SIZE`;
+- `million`: use exactly 1,000,000 reviews from the first two full-source parts
+  and all product metadata;
+- `full`: process all downloaded source parts.
+
+To prepare the complete source for the `million` or `full` profile:
 
 ```powershell
-py -3 scripts/survey_data.py --limit 50000
-# Set SAMPLE_SIZE=50000 in .env, then continue with Docker Compose.
+py -3 scripts/download_full_dataset.py
 ```
 
-The generated JSONL samples remain outside Git; only their compact profiling
-results may be committed.
+Downloaded data remains outside Git. Local `data/full` parts may be removed
+after successful Raw landing because the retained copy is in MinIO.
 
-Build the Spark image and start the shared services:
+Build the images and start the operational stack:
 
 ```powershell
-docker compose up -d --build spark
+docker compose up -d --build airflow-webserver airflow-scheduler dashboard
 docker compose ps -a
 ```
 
 This starts PostgreSQL, bootstraps Polaris, starts MinIO, creates the
-`lakehouse` bucket, copies the configured sample to `raw/`, creates
-`review_catalog`, and starts the utility Spark container. One-shot setup
-services should finish with `Exited (0)`.
+`lakehouse` bucket, lands the configured Raw scope, creates
+`review_catalog`, initializes Airflow, and starts its scheduler, web UI and the
+dashboard. One-shot setup services should finish with `Exited (0)`.
 
-Run the complete finite batch pipeline:
+Open Airflow at `http://localhost:8080`, sign in with the local credentials in
+`.env`, and trigger `product_review_lakehouse`. Its task order is
+`record_run_start -> bronze -> silver -> gold -> publish -> finalize_run`.
+Only one DAG run and one stage are active at a time. Airflow owns task retries,
+while each data task calls its Spark application directly with `spark-submit`.
 
-```powershell
-docker compose run --rm spark-pipeline
-```
+Each run is written to `serving.pipeline_runs` with its source and runtime
+configuration, code version, status, duration, reconciled table counts and
+current Iceberg snapshot IDs. Publish marks the displayed Serving version in
+the same PostgreSQL transaction that swaps all five live tables; finalization
+then marks the run successful.
 
-The runner executes `bronze -> silver -> gold -> publish` in dependency order
-and starts a fresh Spark application for every stage. A failed stage is retried
-once by default; if both attempts fail, the runner stops before downstream
-stages. Configure the policy in `.env` with `PIPELINE_MAX_ATTEMPTS` and
-`PIPELINE_RETRY_DELAY_SECONDS`.
+Airflow is the only supported pipeline entrypoint. Do not run individual data
+stages manually: trigger a new DAG run so task order, retries, failure status,
+logs and final reconciliation remain under one orchestrator. Rerunning the DAG
+is safe because Bronze uses an insert-only idempotent `MERGE`, Silver and Gold
+rebuild deterministically, and Publish replaces the complete Serving version.
 
-Stage-level retries are safe for the current jobs: Bronze uses an insert-only
-idempotent `MERGE`, Silver and Gold use full-batch overwrite, and Publish
-stages, reconciles, then atomically swaps the complete serving table set.
-
-Running the same command again is safe: Bronze inserts only unseen `record_id`
-values, Silver and Gold rebuild deterministically, and Publish replaces the
-serving tables.
-
-To rerun only selected stages, list them in dependency order:
-
-```powershell
-docker compose run --rm spark-pipeline silver gold publish
-```
-
-Valid stage names are `bronze`, `silver`, `gold`, and `publish`. The
-utility `spark` container remains available for troubleshooting:
-
-```powershell
-docker compose exec spark /opt/spark/bin/spark-submit /opt/project/src/silver/build_product_reviews_silver.py
-```
-
-The publisher writes and reconciles all four staging tables before replacing
+The publisher writes and reconciles all five staging tables before replacing
 the live Serving set in one PostgreSQL transaction. A rerun replaces rows; it
 does not append duplicates. See `docs/serving_contract.md` for the exact
 Serving and Iceberg transaction boundaries.
 
-Start the dashboard after publication:
+Start the dashboard independently after publication if it is not already up:
 
 ```powershell
 docker compose up -d --build dashboard
 ```
 
-The UI queries only PostgreSQL and keeps the sample limitations visible. See
-`docs/dashboard.md` for its table mapping and verification boundary.
+The UI queries only PostgreSQL and labels the active sample, million, or full
+scope from configuration. See `docs/dashboard.md` for its table mapping and
+verification boundary.
 
 Useful endpoints:
 
@@ -182,6 +184,8 @@ Useful endpoints:
 - MinIO console: `http://localhost:9001`
 - Polaris API: `http://localhost:8181/api/catalog`
 - Polaris health: `http://localhost:8182/q/health`
+- Airflow: `http://localhost:8080`
+- Active Spark application UI: `http://localhost:4041`
 - Dashboard: `http://localhost:8501`
 
 Stop services while retaining named volumes:
@@ -203,4 +207,5 @@ docker compose --profile tools run --rm --build tests
 - Review count is not sales volume.
 - Ratings of 1–2 are low ratings, not text-sentiment predictions.
 - Product `price` is a metadata-crawl snapshot, not the price at review time.
-- A first-N engineering sample is not a representative sample.
+- A first-N or one-million-row source slice is not representative of the full
+  dataset.

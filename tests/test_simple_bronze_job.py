@@ -4,6 +4,7 @@ from pathlib import Path
 
 from bronze.load_product_reviews_bronze import (
     build_bronze_dataframe,
+    configured_data_mode,
     configured_sample_size,
     load_dataset_config,
     raw_path,
@@ -70,6 +71,17 @@ class SimpleBronzeJobTests(unittest.TestCase):
         second = [row.record_id for row in self._build().collect()]
         self.assertEqual(first, second)
 
+    def test_max_rows_limits_input_before_bronze_processing(self):
+        rows = build_bronze_dataframe(
+            self.spark,
+            self.dataset,
+            self.source,
+            self.source_path,
+            max_rows=2,
+        ).orderBy("source_line_number").collect()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row.source_line_number for row in rows], [1, 2])
+
     def test_project_config_and_raw_path(self):
         dataset, sources = load_dataset_config(
             "/opt/project/config/dataset.json"
@@ -78,8 +90,42 @@ class SimpleBronzeJobTests(unittest.TestCase):
         self.assertEqual(
             raw_path(dataset["dataset_id"], sources["reviews"], 5000),
             "s3a://lakehouse/raw/amazon_reviews_2023_electronics/"
-            "samples/first_5000/reviews/Electronics.jsonl",
+            "full/reviews/part-00000.jsonl.gz",
         )
+        self.assertEqual(
+            raw_path(
+                dataset["dataset_id"],
+                sources["reviews"],
+                data_mode="million",
+            ),
+            "s3a://lakehouse/raw/amazon_reviews_2023_electronics/"
+            "full/reviews/part-0000[01].jsonl.gz",
+        )
+        self.assertEqual(
+            raw_path(
+                dataset["dataset_id"],
+                sources["products"],
+                data_mode="million",
+            ),
+            "s3a://lakehouse/raw/amazon_reviews_2023_electronics/"
+            "full/products/part-*.jsonl.gz",
+        )
+        self.assertEqual(
+            raw_path(
+                dataset["dataset_id"],
+                sources["reviews"],
+                data_mode="full",
+            ),
+            "s3a://lakehouse/raw/amazon_reviews_2023_electronics/"
+            "full/reviews/part-*.jsonl.gz",
+        )
+
+    def test_data_mode_accepts_supported_profiles(self):
+        self.assertEqual(configured_data_mode("sample"), "sample")
+        self.assertEqual(configured_data_mode("MILLION"), "million")
+        self.assertEqual(configured_data_mode("FULL"), "full")
+        with self.assertRaisesRegex(ValueError, "DATA_MODE"):
+            configured_data_mode("everything")
 
     def test_sample_size_must_be_a_positive_integer(self):
         self.assertEqual(configured_sample_size("50000"), 50000)

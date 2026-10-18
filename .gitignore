@@ -5,15 +5,17 @@ __pycache__/
 .venv/
 venv/
 
-# Local secrets and generated runtime state
+# Local secrets and generated files
 .env
 logs/
+airflow/logs/
 tmp/
+~$*.docx
 
 # Pipeline run receipts and generated analysis outputs must not be committed.
+data/full/
 data/runs/
 data/rejected/
-data_survey/**/*_sample.jsonl
 
 # Codex local workspace metadata
 .codex/

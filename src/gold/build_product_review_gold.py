@@ -10,6 +10,7 @@ REVIEW_PRODUCT_SILVER = "polaris.silver.review_product"
 
 MONTHLY_GOLD = "polaris.gold.monthly_review_metrics"
 PRODUCT_GOLD = "polaris.gold.product_review_metrics"
+PRODUCT_MONTHLY_GOLD = "polaris.gold.product_monthly_review_metrics"
 CATEGORY_GOLD = "polaris.gold.category_rating_metrics"
 QUALITY_GOLD = "polaris.gold.data_quality_summary"
 
@@ -130,6 +131,58 @@ def build_product_metrics(reviews_df, products_df):
             "helpful_vote_total"
         ),
         F.current_timestamp().alias("gold_updated_at"),
+    )
+
+
+def build_product_monthly_metrics(reviews_df):
+    grouped = (
+        reviews_df
+        .withColumn(
+            "review_month",
+            F.date_trunc("month", "reviewed_at").cast("date"),
+        )
+        .groupBy("parent_asin", "review_month")
+        .agg(
+            F.count("*").alias("review_count"),
+            F.avg("rating").alias("average_rating"),
+            F.count_if(F.col("rating") <= 2).alias("low_rating_count"),
+            F.count_if("verified_purchase").alias(
+                "verified_purchase_count"
+            ),
+            *[
+                F.count_if(F.col("rating") == rating).alias(
+                    f"rating_{rating}_count"
+                )
+                for rating in range(1, 6)
+            ],
+        )
+    )
+    return (
+        grouped
+        .withColumn(
+            "low_rating_rate",
+            safe_rate(F.col("low_rating_count"), F.col("review_count")),
+        )
+        .withColumn(
+            "verified_purchase_rate",
+            safe_rate(
+                F.col("verified_purchase_count"),
+                F.col("review_count"),
+            ),
+        )
+        .withColumn("gold_updated_at", F.current_timestamp())
+        .select(
+            "parent_asin",
+            "review_month",
+            "review_count",
+            "average_rating",
+            "low_rating_count",
+            "low_rating_rate",
+            "verified_purchase_count",
+            "verified_purchase_rate",
+            *[f"rating_{rating}_count" for rating in range(1, 6)],
+            "gold_updated_at",
+        )
     )
 
 
@@ -295,6 +348,25 @@ def create_gold_tables(spark):
     """)
 
     spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {PRODUCT_MONTHLY_GOLD} (
+            parent_asin STRING NOT NULL,
+            review_month DATE NOT NULL,
+            review_count BIGINT NOT NULL,
+            average_rating DOUBLE,
+            low_rating_count BIGINT NOT NULL,
+            low_rating_rate DOUBLE NOT NULL,
+            verified_purchase_count BIGINT NOT NULL,
+            verified_purchase_rate DOUBLE NOT NULL,
+            rating_1_count BIGINT NOT NULL,
+            rating_2_count BIGINT NOT NULL,
+            rating_3_count BIGINT NOT NULL,
+            rating_4_count BIGINT NOT NULL,
+            rating_5_count BIGINT NOT NULL,
+            gold_updated_at TIMESTAMP NOT NULL
+        ) USING iceberg TBLPROPERTIES ('format-version' = '2')
+    """)
+
+    spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {CATEGORY_GOLD} (
             product_group STRING NOT NULL,
             rating INT NOT NULL,
@@ -329,28 +401,44 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
 
     try:
-        reviews = spark.table(REVIEWS_SILVER).cache()
-        products = spark.table(PRODUCTS_SILVER).cache()
-        rejected = spark.table(REJECTED_SILVER).cache()
-        review_product = spark.table(REVIEW_PRODUCT_SILVER).cache()
+        reviews = spark.table(REVIEWS_SILVER)
+        products = spark.table(PRODUCTS_SILVER)
+        rejected = spark.table(REJECTED_SILVER)
+        review_product = spark.table(REVIEW_PRODUCT_SILVER)
 
-        monthly = build_monthly_metrics(reviews).cache()
-        product = build_product_metrics(reviews, products).cache()
-        category = build_category_rating_metrics(review_product).cache()
-        quality = build_quality_summary(reviews, products, rejected).cache()
+        monthly = build_monthly_metrics(reviews)
+        product = build_product_metrics(reviews, products)
+        product_monthly = build_product_monthly_metrics(reviews)
+        category = build_category_rating_metrics(review_product)
+        quality = build_quality_summary(reviews, products, rejected)
 
         create_gold_tables(spark)
         overwrite_table(spark, monthly, MONTHLY_GOLD, "incoming_monthly_gold")
         overwrite_table(spark, product, PRODUCT_GOLD, "incoming_product_gold")
+        overwrite_table(
+            spark,
+            product_monthly,
+            PRODUCT_MONTHLY_GOLD,
+            "incoming_product_monthly_gold",
+        )
         overwrite_table(spark, category, CATEGORY_GOLD, "incoming_category_gold")
         overwrite_table(spark, quality, QUALITY_GOLD, "incoming_quality_gold")
 
-        print("Gold monthly rows:", monthly.count())
-        print("Gold product rows:", product.count())
-        print("Gold category-rating rows:", category.count())
-        print("Gold quality rows:", quality.count())
-        product.orderBy(F.desc("review_count"), "parent_asin").show(10, False)
-        category.orderBy("product_group", "rating").show(50, False)
+        monthly_table = spark.table(MONTHLY_GOLD)
+        product_table = spark.table(PRODUCT_GOLD)
+        product_monthly_table = spark.table(PRODUCT_MONTHLY_GOLD)
+        category_table = spark.table(CATEGORY_GOLD)
+        quality_table = spark.table(QUALITY_GOLD)
+
+        print("Gold monthly rows:", monthly_table.count())
+        print("Gold product rows:", product_table.count())
+        print("Gold product-month rows:", product_monthly_table.count())
+        print("Gold category-rating rows:", category_table.count())
+        print("Gold quality rows:", quality_table.count())
+        product_table.orderBy(
+            F.desc("review_count"), "parent_asin"
+        ).show(10, False)
+        category_table.orderBy("product_group", "rating").show(50, False)
     finally:
         spark.stop()
 

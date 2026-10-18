@@ -7,6 +7,7 @@ from gold.build_product_review_gold import (
     build_category_rating_metrics,
     build_monthly_metrics,
     build_product_metrics,
+    build_product_monthly_metrics,
     build_quality_summary,
 )
 
@@ -38,6 +39,29 @@ class SimpleGoldJobTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0].review_count, 2)
         self.assertEqual(rows[0].low_rating_count, 1)
+        self.assertAlmostEqual(rows[0].low_rating_rate, 0.5)
+        self.assertAlmostEqual(rows[0].verified_purchase_rate, 0.5)
+
+    def test_product_monthly_metrics_include_rating_buckets(self):
+        reviews = self.spark.createDataFrame([
+            ("P1", datetime.datetime(2023, 1, 1), 1.0, True),
+            ("P1", datetime.datetime(2023, 1, 2), 5.0, False),
+            ("P1", datetime.datetime(2023, 2, 1), 4.0, True),
+        ], (
+            "parent_asin string, reviewed_at timestamp, rating double, "
+            "verified_purchase boolean"
+        ))
+
+        rows = (
+            build_product_monthly_metrics(reviews)
+            .orderBy("review_month")
+            .collect()
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].review_count, 2)
+        self.assertEqual(rows[0].rating_1_count, 1)
+        self.assertEqual(rows[0].rating_5_count, 1)
         self.assertAlmostEqual(rows[0].low_rating_rate, 0.5)
         self.assertAlmostEqual(rows[0].verified_purchase_rate, 0.5)
 

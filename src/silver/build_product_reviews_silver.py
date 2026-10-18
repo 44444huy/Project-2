@@ -524,15 +524,13 @@ def main():
             spark.table(PRODUCTS_BRONZE)
         )
 
-        reviews = reviews.cache()
-        products = products.cache()
-        rejected = review_rejected.unionByName(product_rejected).cache()
-        review_product = build_review_product(reviews, products).cache()
+        rejected = review_rejected.unionByName(product_rejected)
 
         create_silver_tables(spark)
         overwrite_table(spark, reviews, REVIEWS_SILVER, "incoming_reviews")
         overwrite_table(spark, products, PRODUCTS_SILVER, "incoming_products")
         overwrite_table(spark, rejected, REJECTED_SILVER, "incoming_rejected")
+        review_product = build_review_product(reviews, products)
         overwrite_table(
             spark,
             review_product,
@@ -540,21 +538,26 @@ def main():
             "incoming_review_product",
         )
 
-        review_count = reviews.count()
-        product_count = products.count()
-        rejected_count = rejected.count()
-        joined_count = review_product.count()
-        matched_count = review_product.filter("product_found").count()
+        reviews_table = spark.table(REVIEWS_SILVER)
+        products_table = spark.table(PRODUCTS_SILVER)
+        rejected_table = spark.table(REJECTED_SILVER)
+        review_product_table = spark.table(REVIEW_PRODUCT_SILVER)
+
+        review_count = reviews_table.count()
+        product_count = products_table.count()
+        rejected_count = rejected_table.count()
+        joined_count = review_product_table.count()
+        matched_count = review_product_table.filter("product_found").count()
 
         print("Silver reviews:", review_count)
         print("Silver products:", product_count)
         print("Silver rejected rows:", rejected_count)
         print("Silver review-product rows:", joined_count)
-        print("Reviews matched to sampled products:", matched_count)
+        print("Reviews matched to product metadata:", matched_count)
 
-        reviews.groupBy("quality_status").count().show()
-        products.groupBy("quality_status").count().show()
-        rejected.groupBy("source_name").count().show()
+        reviews_table.groupBy("quality_status").count().show()
+        products_table.groupBy("quality_status").count().show()
+        rejected_table.groupBy("source_name").count().show()
     finally:
         spark.stop()
 

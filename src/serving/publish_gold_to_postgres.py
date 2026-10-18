@@ -17,6 +17,9 @@ JDBC_OPTIONS = {
 TABLES = {
     "polaris.gold.monthly_review_metrics": "serving.monthly_review_metrics",
     "polaris.gold.product_review_metrics": "serving.product_review_metrics",
+    "polaris.gold.product_monthly_review_metrics": (
+        "serving.product_monthly_review_metrics"
+    ),
     "polaris.gold.category_rating_metrics": "serving.category_rating_metrics",
     "polaris.gold.data_quality_summary": "serving.data_quality_summary",
 }
@@ -44,6 +47,19 @@ RECONCILIATION_RULES = {
             "low_rating_count",
             "verified_purchase_count",
             "helpful_vote_total",
+        ],
+    },
+    "polaris.gold.product_monthly_review_metrics": {
+        "key_columns": ["parent_asin", "review_month"],
+        "sum_columns": [
+            "review_count",
+            "low_rating_count",
+            "verified_purchase_count",
+            "rating_1_count",
+            "rating_2_count",
+            "rating_3_count",
+            "rating_4_count",
+            "rating_5_count",
         ],
     },
     "polaris.gold.category_rating_metrics": {
@@ -179,6 +195,41 @@ def atomic_swap_statements(staged_tables):
     return statements
 
 
+def staging_optimization_statements(staged_tables):
+    monthly = quote_table(staged_tables["serving.monthly_review_metrics"])
+    product = quote_table(staged_tables["serving.product_review_metrics"])
+    product_monthly = quote_table(
+        staged_tables["serving.product_monthly_review_metrics"]
+    )
+    category = quote_table(staged_tables["serving.category_rating_metrics"])
+    quality = quote_table(staged_tables["serving.data_quality_summary"])
+
+    statements = [
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+        f"CREATE UNIQUE INDEX ON {monthly} (review_month)",
+        f"CREATE UNIQUE INDEX ON {product} (parent_asin)",
+        f"CREATE INDEX ON {product} (review_count DESC, parent_asin)",
+        f"CREATE INDEX ON {product} USING GIN (parent_asin gin_trgm_ops)",
+        f"CREATE INDEX ON {product} USING GIN (product_title gin_trgm_ops)",
+        f"CREATE UNIQUE INDEX ON {product_monthly} "
+        "(parent_asin, review_month)",
+        f"CREATE UNIQUE INDEX ON {category} (product_group, rating)",
+        f"CREATE UNIQUE INDEX ON {quality} "
+        "(source_name, metric_type, metric_name)",
+    ]
+    statements.extend(
+        f"ANALYZE {table_name}"
+        for table_name in (
+            monthly,
+            product,
+            product_monthly,
+            category,
+            quality,
+        )
+    )
+    return statements
+
+
 def execute_statements(connection, statements):
     statement = connection.createStatement()
     try:
@@ -200,6 +251,37 @@ def execute_transaction(connection, statements):
         connection.setAutoCommit(True)
 
 
+
+
+def execute_publish_transaction(connection, statements, run_id=None):
+    connection.setAutoCommit(False)
+    try:
+        execute_statements(connection, statements)
+        if run_id:
+            prepared = connection.prepareStatement(
+                """
+                UPDATE serving.pipeline_runs
+                SET status = 'PUBLISHED',
+                    published_at = NOW(),
+                    updated_at = NOW()
+                WHERE run_id = ?
+                """
+            )
+            try:
+                prepared.setString(1, run_id)
+                if prepared.executeUpdate() != 1:
+                    raise RuntimeError(
+                        f"No pipeline run row found for {run_id}"
+                    )
+            finally:
+                prepared.close()
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.setAutoCommit(True)
+
 def open_postgres_connection(spark):
     spark._jvm.org.apache.spark.sql.execution.datasources.jdbc.DriverRegistry.register(
         JDBC_OPTIONS["driver"]
@@ -220,6 +302,7 @@ def write_jdbc(dataframe, target_table):
         .option("user", JDBC_OPTIONS["user"])
         .option("password", JDBC_OPTIONS["password"])
         .option("driver", JDBC_OPTIONS["driver"])
+        .option("batchsize", "5000")
         .mode("overwrite")
         .save()
     )
@@ -234,6 +317,7 @@ def read_jdbc(spark, target_table):
         .option("user", JDBC_OPTIONS["user"])
         .option("password", JDBC_OPTIONS["password"])
         .option("driver", JDBC_OPTIONS["driver"])
+        .option("fetchsize", "10000")
         .load()
     )
 
@@ -284,9 +368,14 @@ def main():
             finally:
                 outgoing.unpersist()
 
-        execute_transaction(
+        execute_statements(
+            connection,
+            staging_optimization_statements(staged_tables),
+        )
+        execute_publish_transaction(
             connection,
             atomic_swap_statements(staged_tables),
+            os.environ.get("ORCHESTRATION_RUN_ID"),
         )
 
         for source_table, target_table in TABLES.items():

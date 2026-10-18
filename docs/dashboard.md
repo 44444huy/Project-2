@@ -6,36 +6,45 @@ does not query MinIO, Polaris or Iceberg directly.
 
 ## Pages and sources
 
-The single page has four tabs:
+The single page has five tabs. A global observed-month range filters the
+overview and monthly series without changing the published dataset version.
 
 | Tab | PostgreSQL source | Purpose |
 | --- | --- | --- |
-| Monthly | `serving.monthly_review_metrics` | review volume, average rating, low-rating and verified-purchase trends |
-| Products | `serving.product_review_metrics` | search and rank product-level sample metrics |
+| Monthly | monthly and product-monthly Serving marts | overview counts, time-filtered review trends and rating distribution |
+| Products | product and product-monthly Serving marts | search/rank products and inspect the selected product trend by month |
 | Category & rating | `serving.category_rating_metrics` | inspect rating distribution within one product group |
 | Data quality | `serving.data_quality_summary` | inspect accepted statuses and named source issues |
+| Operations | `serving.pipeline_runs` | inspect the latest run status, duration, code version, reconciled counts and Iceberg snapshots |
+
+The overview includes review and product counts. Its observed-month filter also
+controls monthly metrics, rating distribution and the selected product trend.
 
 Product search text and filters are passed as SQL parameters. The application
 does not concatenate user input into SQL.
 
 ## Run and verify
 
-Publish Gold before starting the dashboard:
+Start the dashboard, trigger the Airflow DAG, and wait for it to finish:
 
 ```powershell
-docker compose run --rm spark-pipeline publish
 docker compose up -d --build dashboard
 ```
 
-Open `http://localhost:8501`. The Compose healthcheck uses Streamlit's health
-endpoint. The verified 5k run also executed the page with Streamlit AppTest;
-it connected to PostgreSQL, rendered four tabs and produced no exception.
+Open Airflow at `http://localhost:8080` to trigger
+`product_review_lakehouse`, then open `http://localhost:8501`. The Compose
+healthcheck uses Streamlit's health endpoint. The verified one-million run
+returned `200 ok`, connected to the published PostgreSQL tables, and exposed
+all five dashboard tabs.
 
 ## Interpretation boundary
 
-The dashboard always labels the current data as an engineering sample. Review
-count is not sales, ratings 1–2 are not a text-sentiment model, and product
-price is a metadata snapshot rather than a review-time price. The unmatched
-product group is kept visible because the review and metadata first-5,000
-samples are independent.
+The dashboard labels sample, one-million, and full profiles separately. It also
+shows the run ID and publication time of the Serving version currently being
+displayed. This remains distinct from the latest pipeline attempt: a failed or
+still-running attempt does not replace the last fully published tables.
 
+Review count is not sales, ratings 1–2 are not a text-sentiment model, and
+product price is a metadata snapshot rather than a review-time price. The
+unmatched-product count and group remain visible instead of silently discarding
+reviews without matched product metadata.

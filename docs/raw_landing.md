@@ -1,43 +1,40 @@
 # Raw landing
 
-MinIO is the Raw store for the project. The one-shot `raw-setup` service in
-`docker-compose.yaml` uses the official MinIO Client (`mc`) image to copy
-the selected first-N JSONL samples into bucket `lakehouse`.
+MinIO is the Raw store for the project. The one-shot `raw-setup` service uses
+the official MinIO Client image to land one immutable full source snapshot.
 
-Each local engineering sample has a stable location:
-`data_survey/first_<N>/`, selected by `SAMPLE_SIZE`. It is not a
-dataset-version directory.
+## Processing scopes
+
+- `sample` reads the first `SAMPLE_SIZE` rows from the first full-source part.
+- `million` reads exactly 1,000,000 reviews from the full-source parts.
+- `full` reads every source part.
+- These scopes are applied inside Bronze; they do not create duplicate Raw
+  snapshots.
 
 ## Object layout
 
 ```text
-s3://lakehouse/raw/<dataset_id>/samples/first_<N>/<source>/<file_name>
+s3://lakehouse/raw/<dataset_id>/full/reviews/part-*.jsonl.gz
+s3://lakehouse/raw/<dataset_id>/full/products/part-*.jsonl.gz
+s3://lakehouse/raw/<dataset_id>/full/manifest.json
+s3://lakehouse/raw/<dataset_id>/full/_COMPLETE
 ```
 
-Example objects for `SAMPLE_SIZE=50000`:
-
-```text
-s3://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_50000/reviews/Electronics.jsonl
-s3://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_50000/products/meta_Electronics.jsonl
-```
-
-The sample scope is part of the path so it cannot be confused with a future
-full-data load. Raw files are copied unchanged. This milestone does not create
-checksums, manifests, landing receipts, dataset versions, or JSON run files.
+`scripts/download_full_dataset.py` streams the pinned source URLs into
+resumable, parallel-readable gzip parts. Per-part line counts, byte sizes and
+SHA-256 hashes are written to manifests. The verified Raw snapshot contains
+43,886,945 reviews and 1,610,012 product rows.
 
 ## Idempotence
 
-Before copying, `raw-setup` runs `mc stat` on the destination. If the object is
-already present it is left unchanged, making the selected-sample landing step
-idempotent.
+Raw landing treats `_COMPLETE` as the snapshot completion marker and does not
+upload the same snapshot again. Raw objects remain unchanged after landing.
 
 ## Storage zones
 
-One MinIO instance and one bucket are sufficient:
-
 ```text
 lakehouse/
-|-- raw/        # source JSONL objects
+|-- raw/        # source JSONL/gzip objects
 `-- warehouse/  # Iceberg data and metadata files
 ```
 

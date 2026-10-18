@@ -1,5 +1,53 @@
 name: product-review-lakehouse
 
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
+  image: product-review-airflow:2.10.5-spark3.5.9
+  user: "${AIRFLOW_UID:-50000}:0"
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags:ro
+    - ./src:/opt/project/src:ro
+    - ./config:/opt/project/config:ro
+    - ./scripts:/opt/project/scripts:ro
+    - ./spark/conf/spark-defaults.conf.template:/opt/project/spark-defaults.conf.template:ro
+    - ./airflow/logs:/opt/airflow/logs
+    - spark_ivy_cache:/tmp/.ivy2
+  environment: &airflow-common-environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${AIRFLOW_DB:-airflow}"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_WEBSERVER_SECRET_KEY:?Set AIRFLOW_WEBSERVER_SECRET_KEY in .env}"
+    AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    AIRFLOW_ADMIN_USERNAME: "${AIRFLOW_ADMIN_USERNAME:?Set AIRFLOW_ADMIN_USERNAME in .env}"
+    AIRFLOW_ADMIN_PASSWORD: "${AIRFLOW_ADMIN_PASSWORD:?Set AIRFLOW_ADMIN_PASSWORD in .env}"
+    AIRFLOW_ADMIN_EMAIL: "${AIRFLOW_ADMIN_EMAIL:-admin@example.com}"
+    AIRFLOW_TASK_RETRIES: "${AIRFLOW_TASK_RETRIES:-1}"
+    AIRFLOW_RETRY_DELAY_SECONDS: "${AIRFLOW_RETRY_DELAY_SECONDS:-60}"
+    DATA_MODE: "${DATA_MODE:-sample}"
+    SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
+    CODE_VERSION: "${CODE_VERSION:-local-working-tree}"
+    SPARK_MASTER: "${SPARK_MASTER:-local[2]}"
+    SPARK_DRIVER_MEMORY: "${SPARK_DRIVER_MEMORY:-2g}"
+    SPARK_SHUFFLE_PARTITIONS: "${SPARK_SHUFFLE_PARTITIONS:-8}"
+    SPARK_DEFAULT_PARALLELISM: "${SPARK_DEFAULT_PARALLELISM:-8}"
+    SPARK_LOCAL_DIR: /tmp/spark-local
+    SPARK_CONF_DIR: /tmp/spark-conf
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+    POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+    POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+    POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
+    POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
+    MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+    MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
 services:
   # PostgreSQL stores Polaris catalog metadata and query-ready serving tables.
   postgres:
@@ -15,6 +63,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test:
         - CMD-SHELL
@@ -23,25 +73,60 @@ services:
       timeout: 5s
       retries: 10
 
-  # Create the serving schema on every stack setup; safe with a persisted DB.
+  # Create Airflow metadata storage and serving operations tables idempotently.
   postgres-serving-setup:
     image: postgres:16-alpine
     container_name: product_review_postgres_serving_setup
     restart: "no"
     environment:
       PGPASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
+      AIRFLOW_DB: "${AIRFLOW_DB:-airflow}"
     entrypoint:
       - /bin/sh
       - -c
     command:
-      - >
-        psql -h postgres -U review_user -d review_lakehouse
-        -v ON_ERROR_STOP=1
-        -c 'CREATE SCHEMA IF NOT EXISTS serving AUTHORIZATION review_user;'
+      - |
+        set -eu
+        if ! psql -h postgres -U "$${POSTGRES_USER}" -d postgres -tAc \
+          "SELECT 1 FROM pg_database WHERE datname = '$${AIRFLOW_DB}'" | grep -q 1; then
+          createdb -h postgres -U "$${POSTGRES_USER}" \
+            -O "$${POSTGRES_USER}" "$${AIRFLOW_DB}"
+        fi
+
+        psql -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" \
+          -v ON_ERROR_STOP=1 <<'SQL'
+        CREATE SCHEMA IF NOT EXISTS serving AUTHORIZATION review_user;
+
+        CREATE TABLE IF NOT EXISTS serving.pipeline_runs (
+            run_id TEXT PRIMARY KEY,
+            dag_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED')
+            ),
+            data_mode TEXT NOT NULL,
+            sample_size BIGINT NOT NULL,
+            code_version TEXT NOT NULL,
+            source_config JSONB,
+            run_config JSONB,
+            table_counts JSONB,
+            iceberg_snapshots JSONB,
+            airflow_log_url TEXT,
+            started_at TIMESTAMPTZ NOT NULL,
+            published_at TIMESTAMPTZ,
+            finished_at TIMESTAMPTZ,
+            duration_seconds DOUBLE PRECISION,
+            error_message TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS pipeline_runs_started_at_idx
+          ON serving.pipeline_runs (started_at DESC);
+        SQL
     depends_on:
       postgres:
         condition: service_healthy
-
   # Bootstrap the Polaris realm once against its persistent PostgreSQL store.
   polaris-bootstrap:
     image: apache/polaris-admin-tool:1.7.0
@@ -162,22 +247,19 @@ services:
       - -c
     command:
       - >
-        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb --ignore-existing local/lakehouse &&
-        mc ls local/lakehouse
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" && mc mb --ignore-existing local/lakehouse && mc ls local/lakehouse
 
-  # Copy the configured finite sample into Raw using the official MinIO Client.
+  # Land one immutable full Raw snapshot used by every processing profile.
   raw-setup:
     image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: product_review_raw_setup
     restart: "no"
     volumes:
-      - ./data_survey/first_${SAMPLE_SIZE:-5000}:/opt/project/data:ro
+      - ./data/full:/opt/project/full:ro
     depends_on:
       minio-setup:
         condition: service_completed_successfully
     environment:
-      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
     entrypoint:
@@ -187,12 +269,20 @@ services:
       - |
         set -eu
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
-        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/reviews/Electronics.jsonl >/dev/null 2>&1 || \
-          mc cp /opt/project/data/reviews_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/reviews/Electronics.jsonl
-        mc stat local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/products/meta_Electronics.jsonl >/dev/null 2>&1 || \
-          mc cp /opt/project/data/products_sample.jsonl local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}/products/meta_Electronics.jsonl
-        mc ls --recursive local/lakehouse/raw/amazon_reviews_2023_electronics/samples/first_$${SAMPLE_SIZE}
-
+        base="local/lakehouse/raw/amazon_reviews_2023_electronics"
+        target="$${base}/full"
+        if mc stat "$${target}/_COMPLETE" >/dev/null 2>&1; then
+          echo "Full Raw snapshot already landed"
+        else
+          test -f /opt/project/full/_COMPLETE
+          test -f /opt/project/full/reviews/part-00000.jsonl.gz
+          test -f /opt/project/full/products/part-00000.jsonl.gz
+          mc cp /opt/project/full/reviews/part-*.jsonl.gz "$${target}/reviews/"
+          mc cp /opt/project/full/products/part-*.jsonl.gz "$${target}/products/"
+          mc cp /opt/project/full/full_manifest.json "$${target}/manifest.json"
+          mc cp /opt/project/full/_COMPLETE "$${target}/_COMPLETE"
+        fi
+        mc ls --recursive "$${target}"
   # Create the product-review Polaris catalog idempotently.
   polaris-catalog-setup:
     image: python:3.12-alpine
@@ -228,82 +318,82 @@ services:
       - /bin/sh
       - -c
     command:
-      - chown -R 185:185 /tmp/.ivy2
+      - chown -R 185:185 /tmp/.ivy2 && chmod -R 0777 /tmp/.ivy2
     volumes:
       - spark_ivy_cache:/tmp/.ivy2
 
-  # Utility Spark container for ad hoc inspection and troubleshooting.
-  spark:
-    build:
-      context: .
-      dockerfile: spark/Dockerfile
-    image: product-review-spark:3.5.9
-    container_name: product_review_spark
+  airflow-init:
+    <<: *airflow-common
+    container_name: product_review_airflow_init
     restart: "no"
-    working_dir: /opt/project
-    command:
-      - sleep
-      - infinity
-    ports:
-      - "127.0.0.1:4040:4040"
-    volumes:
-      - ./src:/opt/project/src:ro
-      - ./config:/opt/project/config:ro
-      - spark_ivy_cache:/tmp/.ivy2
-    environment:
-      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
-      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
-      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
-    depends_on:
-      spark-ivy-init:
-        condition: service_completed_successfully
-      minio:
-        condition: service_healthy
-      polaris:
-        condition: service_healthy
-      polaris-catalog-setup:
-        condition: service_completed_successfully
-      raw-setup:
-        condition: service_completed_successfully
-
-  # One finite batch runner for Bronze -> Silver -> Gold -> Publish.
-  # The batch profile keeps data processing separate from infrastructure startup.
-  spark-pipeline:
-    profiles: ["batch"]
-    build:
-      context: .
-      dockerfile: spark/Dockerfile
-    image: product-review-spark:3.5.9
-    container_name: product_review_spark_pipeline
-    restart: "no"
-    working_dir: /opt/project
     entrypoint:
-      - /opt/project/spark-entrypoint.sh
-      - /bin/sh
-      - /opt/project/scripts/run_batch_pipeline.sh
-    volumes:
-      - ./src:/opt/project/src:ro
-      - ./config:/opt/project/config:ro
-      - ./scripts/run_batch_pipeline.sh:/opt/project/scripts/run_batch_pipeline.sh:ro
-      - spark_ivy_cache:/tmp/.ivy2
-    environment:
-      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
-      PIPELINE_MAX_ATTEMPTS: "${PIPELINE_MAX_ATTEMPTS:-2}"
-      PIPELINE_RETRY_DELAY_SECONDS: "${PIPELINE_RETRY_DELAY_SECONDS:-5}"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
-      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
-      POLARIS_CLIENT_ID: "${POLARIS_CLIENT_ID:?Set POLARIS_CLIENT_ID in .env}"
-      POLARIS_CLIENT_SECRET: "${POLARIS_CLIENT_SECRET:?Set POLARIS_CLIENT_SECRET in .env}"
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
+      - /bin/bash
+      - -c
+    command:
+      - |
+        set -eu
+        airflow db migrate
+        if airflow users list --output json | python -c 'import json, os, sys; users = json.load(sys.stdin); sys.exit(not any(user["username"] == os.environ["AIRFLOW_ADMIN_USERNAME"] for user in users))'; then
+          airflow users reset-password \
+            --username "$${AIRFLOW_ADMIN_USERNAME}" \
+            --password "$${AIRFLOW_ADMIN_PASSWORD}"
+        else
+          airflow users create \
+            --username "$${AIRFLOW_ADMIN_USERNAME}" \
+            --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+            --firstname Product \
+            --lastname Review \
+            --role Admin \
+            --email "$${AIRFLOW_ADMIN_EMAIL}"
+        fi
     depends_on:
       postgres-serving-setup:
         condition: service_completed_successfully
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: product_review_airflow_webserver
+    restart: unless-stopped
+    command:
+      - webserver
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8080/health')
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: product_review_airflow_scheduler
+    restart: unless-stopped
+    entrypoint:
+      - /bin/bash
+      - -c
+    command:
+      - /opt/project/scripts/render_spark_config.sh && exec airflow scheduler
+    ports:
+      - "127.0.0.1:4041:4040"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"
+      interval: 15s
+      timeout: 15s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
       spark-ivy-init:
         condition: service_completed_successfully
       minio:
@@ -314,7 +404,6 @@ services:
         condition: service_completed_successfully
       raw-setup:
         condition: service_completed_successfully
-
   # Thin application layer: direct parameterized queries to PostgreSQL Serving.
   dashboard:
     build:
@@ -324,6 +413,8 @@ services:
     container_name: product_review_dashboard
     restart: unless-stopped
     environment:
+      DATA_MODE: "${DATA_MODE:-sample}"
+      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
@@ -343,11 +434,11 @@ services:
       retries: 10
       start_period: 10s
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres-serving-setup:
+        condition: service_completed_successfully
 
   tests:
-    profiles: ["tools"]
+    profiles: [ "tools" ]
     image: product-review-spark:3.5.9
     build:
       context: .
@@ -357,11 +448,20 @@ services:
       - ./src:/opt/project/src:ro
       - ./config:/opt/project/config:ro
       - ./tests:/opt/project/tests:ro
-      - ./scripts/run_batch_pipeline.sh:/opt/project/scripts/run_batch_pipeline.sh:ro
+      - ./scripts:/opt/project/scripts:ro
+      - ./airflow:/opt/project/airflow:ro
+      - ./docker-compose.yaml:/opt/project/docker-compose.yaml:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
+      DATA_MODE: "${DATA_MODE:-sample}"
       SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
+      SPARK_MASTER: "local[2]"
+      SPARK_DRIVER_MEMORY: "2g"
+      SPARK_SHUFFLE_PARTITIONS: "8"
+      SPARK_DEFAULT_PARALLELISM: "8"
+      SPARK_LOCAL_DIR: /tmp/spark-local
       POSTGRES_HOST: postgres
+
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
       POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in .env}"

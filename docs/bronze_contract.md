@@ -9,11 +9,11 @@ creates Iceberg tables with SQL, and runs an insert-only SQL `MERGE`.
 ## Inputs
 
 `config/dataset.json` contains the stable dataset ID, pinned source reference,
-and the two source descriptions. Spark reads these Raw objects:
+and the two source descriptions. Spark reads the immutable full Raw snapshot:
 
 ```text
-s3a://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_<N>/reviews/Electronics.jsonl
-s3a://lakehouse/raw/amazon_reviews_2023_electronics/samples/first_<N>/products/meta_Electronics.jsonl
+s3a://lakehouse/raw/amazon_reviews_2023_electronics/full/reviews/part-*.jsonl.gz
+s3a://lakehouse/raw/amazon_reviews_2023_electronics/full/products/part-*.jsonl.gz
 ```
 
 ## Tables
@@ -49,6 +49,7 @@ The `record_id` does not depend on execution time. The Iceberg `MERGE` inserts
 only IDs that are not already present, so running the same configured batch
 again does not duplicate rows.
 
-For each source the job checks that it read exactly `SAMPLE_SIZE` rows and
-prints the input, parseable, malformed, and final table counts. There is no custom run
-registry or checksum subsystem in the active path.
+For the `sample` profile, Bronze reads exactly `SAMPLE_SIZE` rows from each
+source. The `million` profile limits reviews to 1,000,000 rows while retaining
+complete product metadata, and `full` reads all rows. The job prints input,
+parseable, malformed, and final table counts.

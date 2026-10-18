@@ -1,5 +1,8 @@
 # Phase 1 (5k) status
 
+> Historical checkpoint only. For the current implementation, see the root
+> README, `docs/benchmark_1000000.md`, and `docs/orchestration.md`.
+
 Phase 1 covers Raw, Bronze, Silver and provisional Gold models for the first
 5,000 review lines and first 5,000 product lines. Docker Compose is the
 official runtime.

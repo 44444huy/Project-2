@@ -9,6 +9,17 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 CONFIG_PATH = "/opt/project/config/dataset.json"
 RAW_BUCKET = "lakehouse"
 DEFAULT_SAMPLE_SIZE = 5000
+DEFAULT_DATA_MODE = "sample"
+MILLION_REVIEW_ROWS = 1_000_000
+
+
+def configured_data_mode(value=None):
+    data_mode = (value or os.environ.get("DATA_MODE", DEFAULT_DATA_MODE)).strip().lower()
+    if data_mode not in {"sample", "million", "full"}:
+        raise ValueError(
+            "DATA_MODE must be 'sample', 'million', or 'full'"
+        )
+    return data_mode
 
 
 def configured_sample_size(value=None):
@@ -24,8 +35,17 @@ def configured_sample_size(value=None):
     return sample_size
 
 
+DATA_MODE = configured_data_mode()
 SAMPLE_SIZE = configured_sample_size()
-PIPELINE_RUN_ID = f"first-{SAMPLE_SIZE}-batch"
+PIPELINE_RUN_ID = os.environ.get("ORCHESTRATION_RUN_ID") or (
+    "full-source-batch"
+    if DATA_MODE == "full"
+    else (
+        "first-1000000-reviews-batch"
+        if DATA_MODE == "million"
+        else f"first-{SAMPLE_SIZE}-batch"
+    )
+)
 
 TABLES = {
     "reviews": "polaris.bronze.reviews_raw",
@@ -43,18 +63,44 @@ def load_dataset_config(path=CONFIG_PATH):
     return config, sources
 
 
-def raw_path(dataset_id, source, sample_size=None):
-    sample_size = (
-        SAMPLE_SIZE if sample_size is None else configured_sample_size(sample_size)
+def raw_path(dataset_id, source, sample_size=None, data_mode=None):
+    mode = configured_data_mode(
+        "sample" if data_mode is None and sample_size is not None else data_mode
     )
+    if mode == "full":
+        return (
+            f"s3a://{RAW_BUCKET}/raw/{dataset_id}/full/"
+            f"{source['name']}/part-*.jsonl.gz"
+        )
+    if mode == "million":
+        source_pattern = (
+            "part-0000[01].jsonl.gz"
+            if source["name"] == "reviews"
+            else "part-*.jsonl.gz"
+        )
+        return (
+            f"s3a://{RAW_BUCKET}/raw/{dataset_id}/full/"
+            f"{source['name']}/{source_pattern}"
+        )
+
+    if sample_size is not None:
+        configured_sample_size(sample_size)
     return (
-        f"s3a://{RAW_BUCKET}/raw/{dataset_id}/samples/first_{sample_size}/"
-        f"{source['name']}/{source['file_name']}"
+        f"s3a://{RAW_BUCKET}/raw/{dataset_id}/full/"
+        f"{source['name']}/part-00000.jsonl.gz"
     )
 
 
-def build_bronze_dataframe(spark, dataset, source, input_path):
+def build_bronze_dataframe(
+    spark,
+    dataset,
+    source,
+    input_path,
+    max_rows=None,
+):
     indexed_lines = spark.sparkContext.textFile(str(input_path)).zipWithIndex()
+    if max_rows is not None:
+        indexed_lines = indexed_lines.filter(lambda item: item[1] < max_rows)
     rows = indexed_lines.map(lambda item: (item[0], item[1] + 1))
     input_schema = StructType([
         StructField("raw_json", StringType(), False),
@@ -150,18 +196,44 @@ def main():
                 dataset,
                 source,
                 input_path,
-            ).cache()
+                max_rows=(
+                    SAMPLE_SIZE
+                    if DATA_MODE == "sample"
+                    else (
+                        MILLION_REVIEW_ROWS
+                        if DATA_MODE == "million" and source_name == "reviews"
+                        else None
+                    )
+                ),
+            )
 
-            input_rows = dataframe.count()
-            parseable_rows = dataframe.filter(
-                F.col("parse_status") == "parseable"
-            ).count()
+            input_metrics = dataframe.agg(
+                F.count("*").alias("input_rows"),
+                F.count_if(
+                    F.col("parse_status") == "parseable"
+                ).alias("parseable_rows"),
+            ).first()
+            input_rows = input_metrics["input_rows"]
+            parseable_rows = input_metrics["parseable_rows"]
             malformed_rows = input_rows - parseable_rows
 
-            if input_rows != SAMPLE_SIZE:
+            if DATA_MODE == "sample" and input_rows != SAMPLE_SIZE:
                 raise RuntimeError(
                     f"{source_name}: expected {SAMPLE_SIZE} rows, got {input_rows}"
                 )
+            if (
+                DATA_MODE == "million"
+                and source_name == "reviews"
+                and input_rows != MILLION_REVIEW_ROWS
+            ):
+                raise RuntimeError(
+                    f"reviews: expected {MILLION_REVIEW_ROWS} rows, "
+                    f"got {input_rows}"
+                )
+            if DATA_MODE == "million" and input_rows == 0:
+                raise RuntimeError(f"{source_name}: million-profile input is empty")
+            if DATA_MODE == "full" and input_rows == 0:
+                raise RuntimeError(f"{source_name}: full input is empty")
 
             ensure_bronze_table(spark, table_name)
             merge_bronze(spark, dataframe, table_name, source_name)
@@ -171,8 +243,14 @@ def main():
                 .filter(F.col("dataset_id") == dataset["dataset_id"])
                 .count()
             )
+            if DATA_MODE in {"million", "full"} and table_rows != input_rows:
+                raise RuntimeError(
+                    f"{source_name}: {DATA_MODE} Bronze has {table_rows} rows, "
+                    f"expected exactly {input_rows}"
+                )
             print(json.dumps({
                 "source": source_name,
+                "data_mode": DATA_MODE,
                 "raw_path": input_path,
                 "table": table_name,
                 "input_rows": input_rows,
@@ -180,7 +258,6 @@ def main():
                 "malformed_rows": malformed_rows,
                 "table_rows": table_rows,
             }))
-            dataframe.unpersist()
     finally:
         spark.stop()
 

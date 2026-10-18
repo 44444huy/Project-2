@@ -8,9 +8,8 @@ __pycache__/
 .pytest_cache/
 .coverage
 
-# Runtime data is bind-mounted or stored in Docker volumes, never baked in.
+# Downloaded data is bind-mounted or stored in Docker volumes, never baked in.
 data/
-data_survey/
 tmp/
 logs/
 

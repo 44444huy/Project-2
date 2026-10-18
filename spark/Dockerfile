@@ -13,7 +13,7 @@ RUN apt-get update \
     && chmod +x /opt/project/spark-entrypoint.sh \
     && chown -R 185:185 /opt/project /tmp/.ivy2 /tmp/spark-conf
 
-ENV PYTHONPATH=/opt/project/src \
+ENV PYTHONPATH=/opt/project/src:/opt/project \
     PYSPARK_PYTHON=python3 \
     PYSPARK_DRIVER_PYTHON=python3
 

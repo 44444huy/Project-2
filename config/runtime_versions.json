@@ -12,5 +12,7 @@
   "minio_client": "RELEASE.2025-08-13T08-35-41Z",
   "dashboard_python": "3.12",
   "streamlit": "1.65.0",
-  "psycopg": "3.3.6"
+  "psycopg": "3.3.6",
+  "airflow": "2.10.5",
+  "psycopg2": "2.9.10"
 }

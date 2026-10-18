@@ -61,21 +61,21 @@ structures remain JSON strings so Silver does not discard nested values.
 
 ## Batch behavior
 
-The two 5k source objects are fixed inputs. Silver therefore uses
-`INSERT OVERWRITE` rather than CDC offsets or a run registry. Running the job
-again rebuilds the same logical rows instead of appending duplicates.
+Silver uses `INSERT OVERWRITE` because each run represents one finite,
+configured source scope. Running the job again rebuilds the same logical rows
+instead of appending duplicates.
 
-## Verified sample results
+## Verified one-million-profile results
 
 | Check | Result |
 | --- | ---: |
-| Review rows / distinct IDs | 5,000 / 5,000 |
-| Product rows / distinct IDs | 5,000 / 5,000 |
-| Rejected rows | 0 |
-| Review-product rows | 5,000 |
-| Product matches | 40 (0.8%) |
-| Review warning rows | 1,792 |
-| Product warning rows | 2,939 |
+| Accepted reviews | 1,000,000 |
+| Accepted products | 1,609,918 |
+| Rejected products | 94 |
+| Review-product rows | 1,000,000 |
+| Reviews matched to product metadata | 999,977 |
+| Review PASS / WARNING | 732,500 / 267,500 |
+| Product PASS / WARNING | 481,212 / 1,128,706 |
 
-The 40 matches describe two independent first-N engineering samples. They are
-not the full dataset's join rate.
+The 23 unmatched reviews remain in `review_product` with
+`product_found = false`.
