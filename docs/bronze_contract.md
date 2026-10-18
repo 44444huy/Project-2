@@ -37,7 +37,7 @@ Silver.
 | `source_line_number` | One-based physical JSONL line number. |
 | `source_url` | Pinned upstream file URL. |
 | `source_reference` | Pinned upstream Git commit. |
-| `first_pipeline_run_id` | Label derived from the configured first-N batch. Kept on the existing Bronze schema. |
+| `first_pipeline_run_id` | ID of the first Airflow run that inserted the row. |
 | `first_ingested_at_utc` | Timestamp when the row was first inserted. |
 | `raw_json` | Original JSONL line. |
 | `parse_status` | `parseable` or `malformed`. |
@@ -49,7 +49,6 @@ The `record_id` does not depend on execution time. The Iceberg `MERGE` inserts
 only IDs that are not already present, so running the same configured batch
 again does not duplicate rows.
 
-For the `sample` profile, Bronze reads exactly `SAMPLE_SIZE` rows from each
-source. The `million` profile limits reviews to 1,000,000 rows while retaining
-complete product metadata, and `full` reads all rows. The job prints input,
-parseable, malformed, and final table counts.
+The `million` profile limits reviews to 1,000,000 rows while retaining complete
+product metadata, and `full` reads all rows. The job prints input, parseable,
+malformed, and final table counts.

@@ -45,6 +45,8 @@ class AirflowContractTests(unittest.TestCase):
             )
         self.assertNotIn("run_spark_stage.sh", source)
         self.assertNotIn("PIPELINE_MAX_ATTEMPTS", source)
+        self.assertNotIn("sample_size", source)
+        self.assertIn("review_limit", source)
 
     def test_compose_declares_airflow_runtime_services(self):
         compose = COMPOSE_PATH.read_text(encoding="utf-8")
@@ -60,6 +62,8 @@ class AirflowContractTests(unittest.TestCase):
         self.assertNotIn("\n  spark:\n", compose)
         self.assertNotIn("PIPELINE_MAX_ATTEMPTS", compose)
         self.assertNotIn("PIPELINE_RETRY_DELAY_SECONDS", compose)
+        self.assertIn('DATA_MODE: "${DATA_MODE:-million}"', compose)
+        self.assertNotIn("SAMPLE_SIZE:", compose)
         self.assertIn("- minio_data:/data", compose)
         self.assertIn("- ./airflow/logs:/opt/airflow/logs", compose)
         self.assertIn("SPARK_LOCAL_DIR: /tmp/spark-local", compose)

@@ -4,12 +4,33 @@ import unittest
 from pyspark.sql import SparkSession
 
 from gold.build_product_review_gold import (
+    PRODUCT_GOLD,
     build_category_rating_metrics,
     build_monthly_metrics,
     build_product_metrics,
     build_product_monthly_metrics,
     build_quality_summary,
+    create_gold_tables,
 )
+
+
+class FakeGoldTable:
+    def __init__(self, columns):
+        self.columns = columns
+
+
+class FakeGoldSpark:
+    def __init__(self, product_columns):
+        self.product_columns = product_columns
+        self.statements = []
+
+    def sql(self, statement):
+        self.statements.append(statement)
+
+    def table(self, table_name):
+        if table_name != PRODUCT_GOLD:
+            raise AssertionError(f"Unexpected table lookup: {table_name}")
+        return FakeGoldTable(self.product_columns)
 
 
 class SimpleGoldJobTests(unittest.TestCase):
@@ -89,7 +110,18 @@ class SimpleGoldJobTests(unittest.TestCase):
         self.assertEqual(rows["P1"].review_count, 2)
         self.assertTrue(rows["P1"].product_found)
         self.assertFalse(rows["P2"].product_found)
-        self.assertFalse(rows["P3"].has_sample_reviews)
+        self.assertFalse(rows["P3"].has_reviews)
+
+    def test_existing_gold_column_is_renamed_without_recreating_table(self):
+        spark = FakeGoldSpark(["parent_asin", "has_sample_reviews"])
+
+        create_gold_tables(spark)
+
+        self.assertTrue(any(
+            f"ALTER TABLE {PRODUCT_GOLD}" in statement
+            and "RENAME COLUMN has_sample_reviews TO has_reviews" in statement
+            for statement in spark.statements
+        ))
 
     def test_category_metrics_keep_unmatched_group(self):
         joined = self.spark.createDataFrame([

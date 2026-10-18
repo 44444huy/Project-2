@@ -39,7 +39,7 @@ all five dashboard tabs.
 
 ## Interpretation boundary
 
-The dashboard labels sample, one-million, and full profiles separately. It also
+The dashboard labels one-million and full profiles separately. It also
 shows the run ID and publication time of the Serving version currently being
 displayed. This remains distinct from the latest pipeline attempt: a failed or
 still-running attempt does not replace the last fully published tables.

@@ -1,8 +1,8 @@
 # Product Review Lakehouse
 
 Batch lakehouse for the Electronics subset of Amazon Reviews 2023. It supports
-small first-N samples, a verified one-million-review profile, and the complete
-source snapshot through the same finite batch pipeline.
+a verified one-million-review profile and the complete source snapshot through
+the same finite batch pipeline.
 
 ## Current flow
 
@@ -118,8 +118,6 @@ at runtime; .env.example intentionally contains no usable secrets.
 
 `DATA_MODE` selects the input scope:
 
-- `sample`: read the first N rows from the full Raw snapshot, controlled by
-  `SAMPLE_SIZE`;
 - `million`: use exactly 1,000,000 reviews from the first two full-source parts
   and all product metadata;
 - `full`: process all downloaded source parts.
@@ -174,9 +172,9 @@ Start the dashboard independently after publication if it is not already up:
 docker compose up -d --build dashboard
 ```
 
-The UI queries only PostgreSQL and labels the active sample, million, or full
-scope from configuration. See `docs/dashboard.md` for its table mapping and
-verification boundary.
+The UI queries only PostgreSQL and labels the active million or full scope from
+configuration. See `docs/dashboard.md` for its table mapping and verification
+boundary.
 
 Useful endpoints:
 
@@ -207,5 +205,4 @@ docker compose --profile tools run --rm --build tests
 - Review count is not sales volume.
 - Ratings of 1–2 are low ratings, not text-sentiment predictions.
 - Product `price` is a metadata-crawl snapshot, not the price at review time.
-- A first-N or one-million-row source slice is not representative of the full
-  dataset.
+- A one-million-row source slice is not representative of the full dataset.

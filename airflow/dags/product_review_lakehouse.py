@@ -11,6 +11,7 @@ from airflow.operators.python import PythonOperator
 
 DAG_ID = "product_review_lakehouse"
 DATASET_CONFIG_PATH = Path("/opt/project/config/dataset.json")
+MILLION_REVIEW_ROWS = 1_000_000
 SPARK_SUBMIT_BIN = "/opt/spark/bin/spark-submit"
 SPARK_APPLICATIONS = {
     "bronze": "/opt/project/src/bronze/load_product_reviews_bronze.py",
@@ -30,8 +31,17 @@ def postgres_connection():
     )
 
 
+def processing_scope():
+    data_mode = os.environ.get("DATA_MODE", "million").strip().lower()
+    if data_mode not in {"million", "full"}:
+        raise ValueError("DATA_MODE must be 'million' or 'full'")
+    review_limit = MILLION_REVIEW_ROWS if data_mode == "million" else None
+    return data_mode, review_limit
+
+
 def current_configuration():
     dataset = json.loads(DATASET_CONFIG_PATH.read_text(encoding="utf-8"))
+    data_mode, review_limit = processing_scope()
     source_config = {
         "dataset_id": dataset["dataset_id"],
         "source_reference": dataset["source_reference"],
@@ -45,8 +55,8 @@ def current_configuration():
         ],
     }
     run_config = {
-        "data_mode": os.environ.get("DATA_MODE", "sample"),
-        "sample_size": int(os.environ.get("SAMPLE_SIZE", "5000")),
+        "data_mode": data_mode,
+        "review_limit": review_limit,
         "spark_master": os.environ.get("SPARK_MASTER", "local[2]"),
         "spark_driver_memory": os.environ.get("SPARK_DRIVER_MEMORY", "2g"),
         "spark_shuffle_partitions": int(
@@ -71,7 +81,7 @@ def record_run_start(**context):
                     dag_id,
                     status,
                     data_mode,
-                    sample_size,
+                    review_limit,
                     code_version,
                     source_config,
                     run_config,
@@ -84,7 +94,7 @@ def record_run_start(**context):
                 ON CONFLICT (run_id) DO UPDATE SET
                     status = 'RUNNING',
                     data_mode = EXCLUDED.data_mode,
-                    sample_size = EXCLUDED.sample_size,
+                    review_limit = EXCLUDED.review_limit,
                     code_version = EXCLUDED.code_version,
                     source_config = EXCLUDED.source_config,
                     run_config = EXCLUDED.run_config,
@@ -101,7 +111,7 @@ def record_run_start(**context):
                     context["run_id"],
                     DAG_ID,
                     run_config["data_mode"],
-                    run_config["sample_size"],
+                    run_config["review_limit"],
                     os.environ.get("CODE_VERSION", "local-working-tree"),
                     json.dumps(source_config),
                     json.dumps(run_config),
@@ -114,12 +124,13 @@ def record_run_failure(context):
     error = str(context.get("exception") or "Airflow task failed")[:4000]
     task_instance = context.get("task_instance")
     log_url = task_instance.log_url if task_instance else None
+    data_mode, review_limit = processing_scope()
     with postgres_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO serving.pipeline_runs (
-                    run_id, dag_id, status, data_mode, sample_size,
+                    run_id, dag_id, status, data_mode, review_limit,
                     code_version, airflow_log_url, started_at, finished_at,
                     duration_seconds, error_message, updated_at
                 )
@@ -141,8 +152,8 @@ def record_run_failure(context):
                 (
                     context["run_id"],
                     DAG_ID,
-                    os.environ.get("DATA_MODE", "sample"),
-                    int(os.environ.get("SAMPLE_SIZE", "5000")),
+                    data_mode,
+                    review_limit,
                     os.environ.get("CODE_VERSION", "local-working-tree"),
                     log_url,
                     error,

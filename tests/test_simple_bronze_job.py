@@ -5,7 +5,6 @@ from pathlib import Path
 from bronze.load_product_reviews_bronze import (
     build_bronze_dataframe,
     configured_data_mode,
-    configured_sample_size,
     load_dataset_config,
     raw_path,
 )
@@ -88,11 +87,6 @@ class SimpleBronzeJobTests(unittest.TestCase):
         )
         self.assertEqual(set(sources), {"reviews", "products"})
         self.assertEqual(
-            raw_path(dataset["dataset_id"], sources["reviews"], 5000),
-            "s3a://lakehouse/raw/amazon_reviews_2023_electronics/"
-            "full/reviews/part-00000.jsonl.gz",
-        )
-        self.assertEqual(
             raw_path(
                 dataset["dataset_id"],
                 sources["reviews"],
@@ -121,18 +115,12 @@ class SimpleBronzeJobTests(unittest.TestCase):
         )
 
     def test_data_mode_accepts_supported_profiles(self):
-        self.assertEqual(configured_data_mode("sample"), "sample")
         self.assertEqual(configured_data_mode("MILLION"), "million")
         self.assertEqual(configured_data_mode("FULL"), "full")
-        with self.assertRaisesRegex(ValueError, "DATA_MODE"):
-            configured_data_mode("everything")
-
-    def test_sample_size_must_be_a_positive_integer(self):
-        self.assertEqual(configured_sample_size("50000"), 50000)
-        for invalid_value in ("0", "-1", "abc", ""):
+        for invalid_value in ("sample", "everything"):
             with self.subTest(invalid_value=invalid_value):
-                with self.assertRaises(ValueError):
-                    configured_sample_size(invalid_value)
+                with self.assertRaisesRegex(ValueError, "DATA_MODE"):
+                    configured_data_mode(invalid_value)
 
 
 if __name__ == "__main__":

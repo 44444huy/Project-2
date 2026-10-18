@@ -120,7 +120,7 @@ def build_product_metrics(reviews_df, products_df):
         F.col("product.categories").alias("categories"),
         F.col("product.quality_status").alias("product_quality_status"),
         F.col("product.record_id").isNotNull().alias("product_found"),
-        (review_count > 0).alias("has_sample_reviews"),
+        (review_count > 0).alias("has_reviews"),
         review_count.alias("review_count"),
         F.col("review.average_review_rating").alias("average_review_rating"),
         low_rating_count.alias("low_rating_count"),
@@ -335,7 +335,7 @@ def create_gold_tables(spark):
             categories ARRAY<STRING>,
             product_quality_status STRING,
             product_found BOOLEAN NOT NULL,
-            has_sample_reviews BOOLEAN NOT NULL,
+            has_reviews BOOLEAN NOT NULL,
             review_count BIGINT NOT NULL,
             average_review_rating DOUBLE,
             low_rating_count BIGINT NOT NULL,
@@ -346,6 +346,16 @@ def create_gold_tables(spark):
             gold_updated_at TIMESTAMP NOT NULL
         ) USING iceberg TBLPROPERTIES ('format-version' = '2')
     """)
+
+    product_columns = set(spark.table(PRODUCT_GOLD).columns)
+    if (
+        "has_sample_reviews" in product_columns
+        and "has_reviews" not in product_columns
+    ):
+        spark.sql(
+            f"ALTER TABLE {PRODUCT_GOLD} "
+            "RENAME COLUMN has_sample_reviews TO has_reviews"
+        )
 
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {PRODUCT_MONTHLY_GOLD} (

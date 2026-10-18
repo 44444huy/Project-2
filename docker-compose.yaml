@@ -30,8 +30,7 @@ x-airflow-common: &airflow-common
     AIRFLOW_ADMIN_EMAIL: "${AIRFLOW_ADMIN_EMAIL:-admin@example.com}"
     AIRFLOW_TASK_RETRIES: "${AIRFLOW_TASK_RETRIES:-1}"
     AIRFLOW_RETRY_DELAY_SECONDS: "${AIRFLOW_RETRY_DELAY_SECONDS:-60}"
-    DATA_MODE: "${DATA_MODE:-sample}"
-    SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
+    DATA_MODE: "${DATA_MODE:-million}"
     CODE_VERSION: "${CODE_VERSION:-local-working-tree}"
     SPARK_MASTER: "${SPARK_MASTER:-local[2]}"
     SPARK_DRIVER_MEMORY: "${SPARK_DRIVER_MEMORY:-2g}"
@@ -106,7 +105,7 @@ services:
                 status IN ('RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED')
             ),
             data_mode TEXT NOT NULL,
-            sample_size BIGINT NOT NULL,
+            review_limit BIGINT,
             code_version TEXT NOT NULL,
             source_config JSONB,
             run_config JSONB,
@@ -120,6 +119,46 @@ services:
             error_message TEXT,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+
+        DO $$pipeline_runs_migration$$
+        BEGIN
+          IF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'serving'
+                AND table_name = 'pipeline_runs'
+                AND column_name = 'sample_size'
+          ) AND NOT EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'serving'
+                AND table_name = 'pipeline_runs'
+                AND column_name = 'review_limit'
+          ) THEN
+            ALTER TABLE serving.pipeline_runs
+              RENAME COLUMN sample_size TO review_limit;
+          ELSIF EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'serving'
+                AND table_name = 'pipeline_runs'
+                AND column_name = 'sample_size'
+          ) THEN
+            UPDATE serving.pipeline_runs
+              SET review_limit = COALESCE(review_limit, sample_size);
+            ALTER TABLE serving.pipeline_runs DROP COLUMN sample_size;
+          END IF;
+        END
+        $$pipeline_runs_migration$$;
+
+        ALTER TABLE serving.pipeline_runs
+          ALTER COLUMN review_limit DROP NOT NULL;
+        UPDATE serving.pipeline_runs
+          SET review_limit = 1000000
+          WHERE data_mode = 'million';
+        UPDATE serving.pipeline_runs
+          SET review_limit = NULL
+          WHERE data_mode = 'full';
 
         CREATE INDEX IF NOT EXISTS pipeline_runs_started_at_idx
           ON serving.pipeline_runs (started_at DESC);
@@ -413,8 +452,7 @@ services:
     container_name: product_review_dashboard
     restart: unless-stopped
     environment:
-      DATA_MODE: "${DATA_MODE:-sample}"
-      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
+      DATA_MODE: "${DATA_MODE:-million}"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in .env}"
@@ -453,8 +491,7 @@ services:
       - ./docker-compose.yaml:/opt/project/docker-compose.yaml:ro
       - spark_ivy_cache:/tmp/.ivy2
     environment:
-      DATA_MODE: "${DATA_MODE:-sample}"
-      SAMPLE_SIZE: "${SAMPLE_SIZE:-5000}"
+      DATA_MODE: "${DATA_MODE:-million}"
       SPARK_MASTER: "local[2]"
       SPARK_DRIVER_MEMORY: "2g"
       SPARK_SHUFFLE_PARTITIONS: "8"

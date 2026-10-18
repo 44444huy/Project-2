@@ -12,10 +12,10 @@ DB_CONFIG = {
     "user": os.environ["POSTGRES_USER"],
     "password": os.environ["POSTGRES_PASSWORD"],
 }
-DATA_MODE = os.environ.get("DATA_MODE", "sample").strip().lower()
-SAMPLE_SIZE = int(os.environ.get("SAMPLE_SIZE", "5000"))
+DATA_MODE = os.environ.get("DATA_MODE", "million").strip().lower()
+if DATA_MODE not in {"million", "full"}:
+    raise ValueError("DATA_MODE must be 'million' or 'full'")
 IS_FULL_DATASET = DATA_MODE == "full"
-IS_MILLION_DATASET = DATA_MODE == "million"
 
 
 def query_uncached(sql, parameters=()):
@@ -222,7 +222,7 @@ def load_missing_metadata_reviews():
 def load_pipeline_runs():
     return query_uncached(
         """
-        SELECT run_id, status, data_mode, sample_size, code_version,
+        SELECT run_id, status, data_mode, review_limit, code_version,
                started_at, published_at, finished_at, duration_seconds,
                table_counts, iceberg_snapshots, airflow_log_url,
                error_message
@@ -261,14 +261,9 @@ st.set_page_config(
 st.title("Product Review Lakehouse")
 if IS_FULL_DATASET:
     st.caption("Electronics · complete source snapshot")
-elif IS_MILLION_DATASET:
-    st.caption(
-        "Electronics · 1,000,000 reviews with complete product metadata"
-    )
 else:
     st.caption(
-        f"Electronics · first {SAMPLE_SIZE:,} review rows and "
-        f"{SAMPLE_SIZE:,} product rows"
+        "Electronics · 1,000,000 reviews with complete product metadata"
     )
 
 try:
@@ -306,11 +301,7 @@ with st.sidebar:
     scope_note = (
         "This dashboard uses the complete configured source snapshot. "
         if IS_FULL_DATASET
-        else (
-            "This dashboard uses a fixed one-million-review processing set. "
-            if IS_MILLION_DATASET
-            else "This dashboard uses an engineering sample. "
-        )
+        else "This dashboard uses a fixed one-million-review processing set. "
     )
     st.info(
         scope_note
@@ -469,17 +460,10 @@ with categories_tab:
     st.bar_chart(category_ratings, x="rating", y="review_count")
     st.dataframe(category_ratings, width="stretch", hide_index=True)
     if selected_group == "UNMATCHED_PRODUCT":
-        if IS_FULL_DATASET or IS_MILLION_DATASET:
-            st.warning(
-                "These reviews did not match a product in the complete "
-                "metadata source. They are retained rather than silently dropped."
-            )
-        else:
-            st.warning(
-                f"These reviews did not match the independent first-{SAMPLE_SIZE:,} "
-                "product metadata sample. They are retained rather than silently "
-                "dropped."
-            )
+        st.warning(
+            "These reviews did not match a product in the complete "
+            "metadata source. They are retained rather than silently dropped."
+        )
 
 with quality_tab:
     st.subheader("Accepted status and named issues")
@@ -556,6 +540,7 @@ with operations_tab:
                     "run_id": row["run_id"],
                     "status": row["status"],
                     "data_mode": row["data_mode"],
+                    "review_limit": row["review_limit"],
                     "started_at": row["started_at"],
                     "published_at": row["published_at"],
                     "finished_at": row["finished_at"],

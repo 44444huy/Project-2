@@ -23,7 +23,7 @@ Grain: one distinct `parent_asin` found in either reviews or product metadata.
 A full join is deliberate:
 
 - review-only products remain visible with `product_found = false`;
-- metadata-only products remain visible with `has_sample_reviews = false`;
+- metadata-only products remain visible with `has_reviews = false`;
 - matched products carry both review measures and metadata attributes.
 
 `price` remains a metadata-crawl snapshot, not a historical review-time price.

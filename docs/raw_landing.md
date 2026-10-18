@@ -5,7 +5,6 @@ the official MinIO Client image to land one immutable full source snapshot.
 
 ## Processing scopes
 
-- `sample` reads the first `SAMPLE_SIZE` rows from the first full-source part.
 - `million` reads exactly 1,000,000 reviews from the full-source parts.
 - `full` reads every source part.
 - These scopes are applied inside Bronze; they do not create duplicate Raw
