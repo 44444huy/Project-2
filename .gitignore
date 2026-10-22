@@ -20,3 +20,6 @@ data/rejected/
 # Codex local workspace metadata
 .codex/
 .agents/
+
+# Schema baselines written by the pipeline at runtime; reviewed copies live in schemas/.
+schema_baselines/
