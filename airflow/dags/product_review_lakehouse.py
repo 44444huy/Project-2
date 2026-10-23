@@ -18,10 +18,11 @@ SPARK_APPLICATIONS = {
     "bronze": "/opt/project/src/bronze/load_product_reviews_bronze.py",
     "silver": "/opt/project/src/silver/build_product_reviews_silver.py",
     "gold": "/opt/project/src/gold/build_product_review_gold.py",
+    "quality_guard": "/opt/project/src/operations/quality_guard.py",
     "publish": "/opt/project/src/serving/publish_gold_to_postgres.py",
 }
-# check_raw_schema.py exits with this code when the schema gate blocks the run.
-# Airflow then skips every later task instead of failing and retrying.
+# check_raw_schema.py and quality_guard.py exit with this code when they block
+# the run. Airflow then skips every later task instead of failing and retrying.
 BLOCKED_EXIT_CODE = 99
 
 
@@ -167,6 +168,11 @@ def record_run_failure(context):
 
 task_environment = {
     "ORCHESTRATION_RUN_ID": "{{ run_id }}",
+    # Trigger with conf {"allow_quality_change": true} to publish an intended
+    # quality change that the guard would otherwise block.
+    "QUALITY_GUARD_OVERRIDE": (
+        "{{ (dag_run.conf or {}).get('allow_quality_change', False) }}"
+    ),
 }
 
 
@@ -213,6 +219,11 @@ with DAG(
     bronze = spark_task("bronze", SPARK_APPLICATIONS["bronze"])
     silver = spark_task("silver", SPARK_APPLICATIONS["silver"])
     gold = spark_task("gold", SPARK_APPLICATIONS["gold"])
+    quality_guard = spark_task(
+        "quality_guard",
+        SPARK_APPLICATIONS["quality_guard"],
+        skip_on_exit_code=BLOCKED_EXIT_CODE,
+    )
     publish = spark_task("publish", SPARK_APPLICATIONS["publish"])
     finalize = BashOperator(
         task_id="finalize_run",
@@ -225,4 +236,7 @@ with DAG(
         append_env=True,
     )
 
-    start >> schema_check >> bronze >> silver >> gold >> publish >> finalize
+    (
+        start >> schema_check >> bronze >> silver >> gold >> quality_guard
+        >> publish >> finalize
+    )

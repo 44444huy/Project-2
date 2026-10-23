@@ -34,6 +34,10 @@ x-airflow-common: &airflow-common
     DATA_MODE: "${DATA_MODE:-million}"
     SCHEMA_CHECK_MODE: "${SCHEMA_CHECK_MODE:-report}"
     SCHEMA_CHECK_LINES_PER_PART: "${SCHEMA_CHECK_LINES_PER_PART:-20000}"
+    QUALITY_GUARD_MODE: "${QUALITY_GUARD_MODE:-report}"
+    QUALITY_GUARD_MAX_REJECT_RATE_INCREASE: "${QUALITY_GUARD_MAX_REJECT_RATE_INCREASE:-0.01}"
+    QUALITY_GUARD_MAX_ISSUE_RATE_INCREASE: "${QUALITY_GUARD_MAX_ISSUE_RATE_INCREASE:-0.05}"
+    QUALITY_GUARD_MAX_ACCEPTED_DROP: "${QUALITY_GUARD_MAX_ACCEPTED_DROP:-0.05}"
     CODE_VERSION: "${CODE_VERSION:-local-working-tree}"
     SPARK_MASTER: "${SPARK_MASTER:-local[2]}"
     SPARK_DRIVER_MEMORY: "${SPARK_DRIVER_MEMORY:-2g}"
@@ -107,7 +111,7 @@ services:
             status TEXT NOT NULL CONSTRAINT pipeline_runs_status_check CHECK (
                 status IN (
                     'RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED',
-                    'SCHEMA_DRIFT_BLOCKED'
+                    'SCHEMA_DRIFT_BLOCKED', 'QUALITY_GUARD_BLOCKED'
                 )
             ),
             data_mode TEXT NOT NULL,
@@ -175,7 +179,7 @@ services:
           ADD CONSTRAINT pipeline_runs_status_check CHECK (
             status IN (
               'RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED',
-              'SCHEMA_DRIFT_BLOCKED'
+              'SCHEMA_DRIFT_BLOCKED', 'QUALITY_GUARD_BLOCKED'
             )
           );
 
@@ -196,6 +200,23 @@ services:
             error_message TEXT,
             checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (run_id, source_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS serving.quality_guard_checks (
+            run_id TEXT NOT NULL,
+            check_name TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (
+                action IN ('PASS', 'BLOCK', 'OVERRIDDEN')
+            ),
+            previous_value DOUBLE PRECISION,
+            current_value DOUBLE PRECISION,
+            limit_value DOUBLE PRECISION,
+            message TEXT,
+            checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (run_id, check_name, source_name, metric_name)
         );
         SQL
     depends_on:

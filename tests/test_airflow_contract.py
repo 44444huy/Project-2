@@ -19,10 +19,15 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn('max_active_runs=1', source)
         self.assertIn('max_active_tasks=1', source)
         self.assertIn(
-            'start >> schema_check >> bronze >> silver >> gold >> publish '
-            '>> finalize',
+            'start >> schema_check >> bronze >> silver >> gold >> quality_guard',
             source,
         )
+        self.assertIn('>> publish >> finalize', source)
+        self.assertIn(
+            '"quality_guard": "/opt/project/src/operations/quality_guard.py"',
+            source,
+        )
+        self.assertIn("allow_quality_change", source)
         self.assertIn("def spark_task(", source)
         self.assertIn(
             'bash_command=f"{SPARK_SUBMIT_BIN} {application}"',
@@ -80,6 +85,9 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn("- ./schemas:/opt/project/schemas:ro", compose)
         self.assertIn("CREATE TABLE IF NOT EXISTS serving.schema_drift_events", compose)
         self.assertIn("'SCHEMA_DRIFT_BLOCKED'", compose)
+        self.assertIn("'QUALITY_GUARD_BLOCKED'", compose)
+        self.assertIn('QUALITY_GUARD_MODE: "${QUALITY_GUARD_MODE:-report}"', compose)
+        self.assertIn("CREATE TABLE IF NOT EXISTS serving.quality_guard_checks", compose)
         self.assertNotIn("./runtime", compose)
         self.assertNotIn("data_survey", compose)
 
