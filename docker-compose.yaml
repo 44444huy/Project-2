@@ -104,8 +104,11 @@ services:
         CREATE TABLE IF NOT EXISTS serving.pipeline_runs (
             run_id TEXT PRIMARY KEY,
             dag_id TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (
-                status IN ('RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED')
+            status TEXT NOT NULL CONSTRAINT pipeline_runs_status_check CHECK (
+                status IN (
+                    'RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED',
+                    'SCHEMA_DRIFT_BLOCKED'
+                )
             ),
             data_mode TEXT NOT NULL,
             review_limit BIGINT,
@@ -165,6 +168,16 @@ services:
 
         CREATE INDEX IF NOT EXISTS pipeline_runs_started_at_idx
           ON serving.pipeline_runs (started_at DESC);
+
+        ALTER TABLE serving.pipeline_runs
+          DROP CONSTRAINT IF EXISTS pipeline_runs_status_check;
+        ALTER TABLE serving.pipeline_runs
+          ADD CONSTRAINT pipeline_runs_status_check CHECK (
+            status IN (
+              'RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED',
+              'SCHEMA_DRIFT_BLOCKED'
+            )
+          );
 
         CREATE TABLE IF NOT EXISTS serving.schema_drift_events (
             run_id TEXT NOT NULL,

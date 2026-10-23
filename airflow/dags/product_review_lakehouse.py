@@ -20,6 +20,9 @@ SPARK_APPLICATIONS = {
     "gold": "/opt/project/src/gold/build_product_review_gold.py",
     "publish": "/opt/project/src/serving/publish_gold_to_postgres.py",
 }
+# check_raw_schema.py exits with this code when the schema gate blocks the run.
+# Airflow then skips every later task instead of failing and retrying.
+BLOCKED_EXIT_CODE = 99
 
 
 def postgres_connection():
@@ -167,12 +170,13 @@ task_environment = {
 }
 
 
-def spark_task(task_id, application):
+def spark_task(task_id, application, **operator_args):
     return BashOperator(
         task_id=task_id,
         bash_command=f"{SPARK_SUBMIT_BIN} {application}",
         env=task_environment,
         append_env=True,
+        **operator_args,
     )
 
 
@@ -202,7 +206,9 @@ with DAG(
     )
 
     schema_check = spark_task(
-        "schema_check", SPARK_APPLICATIONS["schema_check"]
+        "schema_check",
+        SPARK_APPLICATIONS["schema_check"],
+        skip_on_exit_code=BLOCKED_EXIT_CODE,
     )
     bronze = spark_task("bronze", SPARK_APPLICATIONS["bronze"])
     silver = spark_task("silver", SPARK_APPLICATIONS["silver"])
