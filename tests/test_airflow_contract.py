@@ -19,12 +19,18 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn('max_active_runs=1', source)
         self.assertIn('max_active_tasks=1', source)
         self.assertIn(
-            'start >> bronze >> silver >> gold >> publish >> finalize',
+            'start >> schema_check >> bronze >> silver >> gold >> publish '
+            '>> finalize',
             source,
         )
         self.assertIn("def spark_task(", source)
         self.assertIn(
             'bash_command=f"{SPARK_SUBMIT_BIN} {application}"',
+            source,
+        )
+        self.assertIn(
+            '"schema_check": '
+            '"/opt/project/src/schema_evolution/check_raw_schema.py"',
             source,
         )
         expected_applications = {
@@ -67,6 +73,9 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn("- minio_data:/data", compose)
         self.assertIn("- ./airflow/logs:/opt/airflow/logs", compose)
         self.assertIn("SPARK_LOCAL_DIR: /tmp/spark-local", compose)
+        self.assertIn('SCHEMA_CHECK_MODE: "${SCHEMA_CHECK_MODE:-report}"', compose)
+        self.assertIn("- ./schemas:/opt/project/schemas:ro", compose)
+        self.assertIn("CREATE TABLE IF NOT EXISTS serving.schema_drift_events", compose)
         self.assertNotIn("./runtime", compose)
         self.assertNotIn("data_survey", compose)
 

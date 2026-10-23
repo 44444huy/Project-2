@@ -14,6 +14,7 @@ DATASET_CONFIG_PATH = Path("/opt/project/config/dataset.json")
 MILLION_REVIEW_ROWS = 1_000_000
 SPARK_SUBMIT_BIN = "/opt/spark/bin/spark-submit"
 SPARK_APPLICATIONS = {
+    "schema_check": "/opt/project/src/schema_evolution/check_raw_schema.py",
     "bronze": "/opt/project/src/bronze/load_product_reviews_bronze.py",
     "silver": "/opt/project/src/silver/build_product_reviews_silver.py",
     "gold": "/opt/project/src/gold/build_product_review_gold.py",
@@ -200,6 +201,9 @@ with DAG(
         python_callable=record_run_start,
     )
 
+    schema_check = spark_task(
+        "schema_check", SPARK_APPLICATIONS["schema_check"]
+    )
     bronze = spark_task("bronze", SPARK_APPLICATIONS["bronze"])
     silver = spark_task("silver", SPARK_APPLICATIONS["silver"])
     gold = spark_task("gold", SPARK_APPLICATIONS["gold"])
@@ -215,4 +219,4 @@ with DAG(
         append_env=True,
     )
 
-    start >> bronze >> silver >> gold >> publish >> finalize
+    start >> schema_check >> bronze >> silver >> gold >> publish >> finalize

@@ -10,6 +10,7 @@ x-airflow-common: &airflow-common
     - ./airflow/dags:/opt/airflow/dags:ro
     - ./src:/opt/project/src:ro
     - ./config:/opt/project/config:ro
+    - ./schemas:/opt/project/schemas:ro
     - ./scripts:/opt/project/scripts:ro
     - ./spark/conf/spark-defaults.conf.template:/opt/project/spark-defaults.conf.template:ro
     - ./airflow/logs:/opt/airflow/logs
@@ -31,6 +32,8 @@ x-airflow-common: &airflow-common
     AIRFLOW_TASK_RETRIES: "${AIRFLOW_TASK_RETRIES:-1}"
     AIRFLOW_RETRY_DELAY_SECONDS: "${AIRFLOW_RETRY_DELAY_SECONDS:-60}"
     DATA_MODE: "${DATA_MODE:-million}"
+    SCHEMA_CHECK_MODE: "${SCHEMA_CHECK_MODE:-report}"
+    SCHEMA_CHECK_LINES_PER_PART: "${SCHEMA_CHECK_LINES_PER_PART:-20000}"
     CODE_VERSION: "${CODE_VERSION:-local-working-tree}"
     SPARK_MASTER: "${SPARK_MASTER:-local[2]}"
     SPARK_DRIVER_MEMORY: "${SPARK_DRIVER_MEMORY:-2g}"
@@ -162,6 +165,25 @@ services:
 
         CREATE INDEX IF NOT EXISTS pipeline_runs_started_at_idx
           ON serving.pipeline_runs (started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS serving.schema_drift_events (
+            run_id TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (
+                action IN ('ACCEPT', 'REVIEW', 'BLOCK', 'ERROR')
+            ),
+            baseline_version INTEGER,
+            records BIGINT,
+            malformed BIGINT,
+            sampled_partitions INTEGER,
+            lines_per_partition INTEGER,
+            raw_path TEXT,
+            changes JSONB NOT NULL DEFAULT '[]'::jsonb,
+            error_message TEXT,
+            checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (run_id, source_name)
+        );
         SQL
     depends_on:
       postgres:
@@ -486,6 +508,7 @@ services:
       - ./src:/opt/project/src:ro
       - ./config:/opt/project/config:ro
       - ./tests:/opt/project/tests:ro
+      - ./schemas:/opt/project/schemas:ro
       - ./scripts:/opt/project/scripts:ro
       - ./airflow:/opt/project/airflow:ro
       - ./docker-compose.yaml:/opt/project/docker-compose.yaml:ro

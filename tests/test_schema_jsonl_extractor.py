@@ -8,6 +8,7 @@ from schema_evolution.comparator import REMOVE_FIELD, TYPE_CHANGE, compare_schem
 from schema_evolution.jsonl_extractor import (
     SOURCE_IGNORED_FIELDS,
     SOURCE_OPAQUE_FIELDS,
+    build_profile,
     json_type,
     profile_lines,
     read_lines,
@@ -151,6 +152,12 @@ class ProfileLinesTest(unittest.TestCase):
         after = profile_lines(lines({"title": "x", "bought_together": "B001,B002"}),
                               ignored_fields=ignored)["schema"]
         self.assertEqual(compare_schemas(before, after), [])
+
+    def test_merged_profiles_equal_profile_of_all_lines(self):
+        first = [{"price": 1.0}, {"price": None}]
+        second = [{"price": "—", "store": "A"}]
+        merged = build_profile(lines(*first)).merge(build_profile(lines(*second)))
+        self.assertEqual(merged.result(), profile_lines(lines(*first, *second)))
 
     def test_malformed_and_non_object_lines_are_counted(self):
         result = profile_lines(["{\"a\": 1}", "not json", "[1, 2]", "", "{\"a\": 2}"])

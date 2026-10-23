@@ -135,6 +135,28 @@ class _Profile:
                 self._field(element_path, path)["present"] += 1
                 self._visit_value(element_path, element)
 
+    def merge(self, other):
+        # Gộp số đếm của một profile khác (ví dụ của một phần dữ liệu khác) vào
+        # profile này. Hai profile phải dùng cùng danh sách trường opaque và bỏ qua.
+        self.records += other.records
+        self.malformed += other.malformed
+        for path, count in other.object_counts.items():
+            self.object_counts[path] = self.object_counts.get(path, 0) + count
+        for path, stats in other.fields.items():
+            target = self._field(path, stats["parent"])
+            target["present"] += stats["present"]
+            target["null"] += stats["null"]
+            for name, count in stats["types"].items():
+                target["types"][name] = target["types"].get(name, 0) + count
+        return self
+
+    def result(self):
+        return {
+            "records": self.records,
+            "malformed": self.malformed,
+            "schema": self.schema(),
+        }
+
     def schema(self):
         result = {}
         for path, stats in sorted(self.fields.items()):
@@ -166,17 +188,18 @@ class _Profile:
         return result
 
 
-def profile_lines(lines, opaque_fields=(), ignored_fields=()):
-    # Suy ra schema từ các dòng JSONL. Trả về schema theo định dạng comparator
-    # dùng, kèm số dòng hợp lệ và số dòng không phải JSON object.
+def build_profile(lines, opaque_fields=(), ignored_fields=()):
+    # Đếm các dòng JSONL thành một profile có thể gộp với profile khác.
     profile = _Profile(opaque_fields, ignored_fields)
     for line in lines:
         profile.add_line(line)
-    return {
-        "records": profile.records,
-        "malformed": profile.malformed,
-        "schema": profile.schema(),
-    }
+    return profile
+
+
+def profile_lines(lines, opaque_fields=(), ignored_fields=()):
+    # Suy ra schema từ các dòng JSONL. Trả về schema theo định dạng comparator
+    # dùng, kèm số dòng hợp lệ và số dòng không phải JSON object.
+    return build_profile(lines, opaque_fields, ignored_fields).result()
 
 
 def read_lines(path, limit=None, step=1):
