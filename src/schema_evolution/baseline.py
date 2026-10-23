@@ -116,6 +116,9 @@ def apply_accepted_changes(old_schema, new_schema, changes):
         field = change["field"]
         if change["change"] == ADD_FIELD:
             merged[field] = copy.deepcopy(new_schema[field])
+            # Giữ đúng nullable mà comparator đã đánh giá (trường mới quan sát
+            # được từ JSON là tùy chọn cho đến khi được duyệt).
+            merged[field]["nullable"] = change["nullable"]
         elif change["change"] == REMOVE_FIELD:
             merged.pop(field, None)
         elif change["change"] in CHANGE_KEYS:

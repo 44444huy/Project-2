@@ -214,6 +214,22 @@ class ComparatorIntegrationTest(unittest.TestCase):
         }}
         self.assertEqual(compare_schemas(approved, schema_of({"title": "Great"})), [])
 
+    def test_new_key_present_in_every_row_is_accepted_as_optional(self):
+        changes = compare_schemas(schema_of(REVIEW), schema_of({**REVIEW, "language": "en"}))
+        self.assertEqual(
+            [(c["change"], c["field"], c["nullable"]) for c in changes],
+            [("ADD_FIELD", "language", True)],
+        )
+        self.assertEqual(decide(changes)["action"], ACCEPT)
+
+    def test_rename_is_still_detected_when_new_key_is_in_every_row(self):
+        renamed = dict(REVIEW)
+        renamed["parent_id"] = renamed.pop("parent_asin")
+        changes = compare_schemas(schema_of(REVIEW), schema_of(renamed))
+        added = next(c for c in changes if c["field"] == "parent_id")
+        self.assertEqual(added["renamed_from"], "parent_asin")
+        self.assertEqual(decide(changes)["action"], BLOCK)
+
     def test_new_optional_key_is_accepted(self):
         extended = [REVIEW, {**REVIEW, "language": "en"}]
         changes = compare_schemas(schema_of(REVIEW), schema_of(*extended))

@@ -39,7 +39,9 @@ def compare_schemas(old_schema, new_schema):
             "field": field,
             "change": ADD_FIELD,
             "type": describe_type(column),
-            "nullable": column["nullable"],
+            # Nguồn JSON: trường mới có ở mọi dòng trong mẫu không có nghĩa là
+            # nguồn bắt buộc nó. Coi là tùy chọn cho đến khi người duyệt khai báo.
+            "nullable": column["nullable"] or bool(column.get("observed_nullability")),
         })
 
     for field in sorted(old_schema.keys() - new_schema.keys()):

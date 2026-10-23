@@ -175,6 +175,16 @@ class ApprovedDecisionsTest(BaselineTestCase):
         self.assertEqual(schema["title"]["source_note"], "Chốt nullable = true")
         self.assertEqual(schema["language"], language)
 
+    def test_auto_accepted_new_field_from_json_is_stored_as_optional(self):
+        approve(TABLE, self.approved(), "Duyệt từng trường", self.root)
+        language = {"type": "string", "nullable": False, "logical_type": None,
+                    "parameters": {}, "observed_nullability": True}
+
+        result = evaluate(TABLE, self.observed(language=language), self.root)
+
+        self.assertEqual(result["action"], ACCEPT)
+        self.assertTrue(load_baseline(TABLE, self.root)["schema"]["language"]["nullable"])
+
     def test_observation_without_changes_creates_no_version(self):
         approve(TABLE, self.approved(), "Duyệt từng trường", self.root)
 
