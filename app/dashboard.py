@@ -162,7 +162,9 @@ def load_product_count():
 def load_rating_distribution(first_month, last_month):
     return query(
         """
-        SELECT bucket.rating, SUM(bucket.review_count) AS review_count
+        SELECT
+            bucket.rating,
+            SUM(bucket.review_count)::BIGINT AS review_count
         FROM serving.product_monthly_review_metrics AS metric
         CROSS JOIN LATERAL (
             VALUES
