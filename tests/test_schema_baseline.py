@@ -268,6 +268,12 @@ class ApproveTest(BaselineTestCase):
         copy_path = review_root / TABLE / f"v{document['version']}.json"
         self.assertEqual(json.loads(copy_path.read_text(encoding="utf-8")), document)
 
+    def test_approve_into_review_root_itself_writes_once(self):
+        document = approve(TABLE, self.v1, "Duyệt thẳng vào schemas", self.root, self.root)
+
+        self.assertEqual(document["version"], 1)
+        self.assertEqual(list_versions(TABLE, self.root), [1])
+
     def test_approve_without_review_root_writes_no_copy(self):
         approve(TABLE, self.v1, "đầu tiên", self.root)
 

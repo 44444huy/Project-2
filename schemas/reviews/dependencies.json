@@ -1,0 +1,22 @@
+{
+  "bronze": ["*"],
+  "silver": [
+    "asin",
+    "helpful_vote",
+    "images",
+    "parent_asin",
+    "rating",
+    "text",
+    "timestamp",
+    "title",
+    "user_id",
+    "verified_purchase"
+  ],
+  "gold": [
+    "helpful_vote",
+    "parent_asin",
+    "rating",
+    "timestamp",
+    "verified_purchase"
+  ]
+}

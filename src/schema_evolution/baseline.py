@@ -189,7 +189,7 @@ def approve(table, new_schema, reason, root=DEFAULT_ROOT, review_root=None):
 
     document = save_version(table, new_schema, f"Duyệt thủ công: {reason}", root)
 
-    if review_root is not None:
+    if review_root is not None and Path(review_root).resolve() != Path(root).resolve():
         _write_document(table, document, review_root)
 
     return document
@@ -226,10 +226,12 @@ if __name__ == "__main__":
         document = approve(
             args.table, schema, args.reason, args.root, args.review_root
         )
+        # Cổng schema của Project2 đọc thẳng schemas/, nên duyệt với
+        # --root schemas: bản duyệt nằm luôn ở đó, không cần bản sao thứ hai.
         result = {
             "approved_version": document["version"],
             "reason": document["reason"],
-            "review_copy": str(Path(args.review_root) / args.table),
+            "written_to": str(Path(args.root) / args.table),
         }
 
     print(json.dumps(result, indent=2, ensure_ascii=False))

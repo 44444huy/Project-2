@@ -8,6 +8,35 @@ from pathlib import Path
 from schema_evolution.dependencies import load_dependencies, uses_column
 
 
+class ArrayElementTest(unittest.TestCase):
+    def test_array_column_covers_its_elements(self):
+        self.assertTrue(uses_column(["categories"], "categories[]"))
+        self.assertTrue(uses_column(["images"], "images[].thumb"))
+
+    def test_element_does_not_match_a_different_column(self):
+        self.assertFalse(uses_column(["categories"], "categoriesx"))
+
+
+class ProjectDependencyFilesTest(unittest.TestCase):
+    # Hai file dependency thật của Project2 phải đọc được và khai báo đúng lớp.
+
+    def load(self, source):
+        return load_dependencies(Path("/opt/project/schemas") / source / "dependencies.json")
+
+    def test_reviews_gold_columns(self):
+        dependencies = self.load("reviews")
+        self.assertEqual(dependencies["bronze"], ["*"])
+        for column in ("parent_asin", "rating", "timestamp"):
+            self.assertTrue(uses_column(dependencies["gold"], column))
+        self.assertFalse(uses_column(dependencies["gold"], "asin"))
+
+    def test_products_gold_columns(self):
+        dependencies = self.load("products")
+        for column in ("parent_asin", "title", "price", "categories[]"):
+            self.assertTrue(uses_column(dependencies["gold"], column))
+        self.assertFalse(uses_column(dependencies["gold"], "details"))
+
+
 class LoadDependenciesTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -35,10 +35,12 @@ def load_dependencies(path):
 
 def uses_column(columns, field):
     # "*" là dùng mọi cột. Cột lồng nhau khớp theo tiền tố: khai báo "address"
-    # bao cả "address.city", và xóa "address" làm mất cả "address.city".
+    # bao cả "address.city", và xóa "address" làm mất cả "address.city". Phần tử
+    # mảng của nguồn JSON cũng vậy: "categories" bao cả "categories[]".
     for column in columns:
         if column == "*" or column == field:
             return True
-        if field.startswith(column + ".") or column.startswith(field + "."):
-            return True
+        for separator in (".", "[]"):
+            if field.startswith(column + separator) or column.startswith(field + separator):
+                return True
     return False
