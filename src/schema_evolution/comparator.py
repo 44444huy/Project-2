@@ -7,6 +7,9 @@ TYPE_CHANGE = "TYPE_CHANGE"
 NULLABILITY_CHANGE = "NULLABILITY_CHANGE"
 PARAMETER_CHANGE = "PARAMETER_CHANGE"
 
+# Kiểu jsonl_extractor ghi cho trường mà mọi giá trị quan sát được đều là null.
+NO_EVIDENCE_TYPE = "null"
+
 
 def describe_type(column):
     # Gộp type vật lý + logical type thành một chuỗi để so sánh,
@@ -55,7 +58,12 @@ def compare_schemas(old_schema, new_schema):
         old_type = describe_type(old_column)
         new_type = describe_type(new_column)
 
-        if old_type != new_type:
+        if new_type == NO_EVIDENCE_TYPE:
+            # Nguồn JSON: trường chỉ có giá trị null trong mẫu nên không biết kiểu.
+            # Không có bằng chứng thì không báo đổi kiểu; nếu trường vốn bắt buộc
+            # thì NULLABILITY_CHANGE bên dưới vẫn báo.
+            pass
+        elif old_type != new_type:
             changes.append({
                 "field": field,
                 "change": TYPE_CHANGE,
@@ -79,7 +87,15 @@ def compare_schemas(old_schema, new_schema):
                     "to": new_parameters,
                 })
 
-        if old_column["nullable"] != new_column["nullable"]:
+        # Nguồn JSON: nullable của schema mới là quan sát từ mẫu, không phải khai
+        # báo. Mẫu không có null không chứng minh trường đã thành bắt buộc, nên chỉ
+        # báo chiều bắt buộc sang có null.
+        tightened_by_sample = (
+            new_column.get("observed_nullability")
+            and old_column["nullable"]
+            and not new_column["nullable"]
+        )
+        if old_column["nullable"] != new_column["nullable"] and not tightened_by_sample:
             changes.append({
                 "field": field,
                 "change": NULLABILITY_CHANGE,
