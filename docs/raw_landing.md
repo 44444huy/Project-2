@@ -22,12 +22,14 @@ s3://lakehouse/raw/<dataset_id>/full/_COMPLETE
 `scripts/download_full_dataset.py` streams the pinned source URLs into
 resumable, parallel-readable gzip parts. Per-part line counts, byte sizes and
 SHA-256 hashes are written to manifests. The verified Raw snapshot contains
-43,886,945 reviews and 1,610,012 product rows.
+43,886,944 reviews and 1,610,012 product rows.
 
 ## Idempotence
 
 Raw landing treats `_COMPLETE` as the snapshot completion marker and does not
 upload the same snapshot again. Raw objects remain unchanged after landing.
+The one approved exception is the 2026-10-23 split-line repair of reviews
+parts 00032/00033; see `docs/raw_repair_split_line.md`.
 
 ## Storage zones
 
