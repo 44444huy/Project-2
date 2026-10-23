@@ -15,7 +15,7 @@ overview and monthly series without changing the published dataset version.
 | Products | product and product-monthly Serving marts | search/rank products and inspect the selected product trend by month |
 | Category & rating | `serving.category_rating_metrics` | inspect rating distribution within one product group |
 | Data quality | `serving.data_quality_summary` | inspect accepted statuses and named source issues |
-| Operations | `serving.pipeline_runs`, `serving.schema_drift_events` | inspect the latest run status, duration, code version, Raw schema gate result, reconciled counts and Iceberg snapshots |
+| Operations | `serving.pipeline_runs`, `serving.schema_drift_events`, `serving.quality_guard_checks` | inspect the latest run status, duration, code version, Raw schema gate and quality guard results, reconciled counts and Iceberg snapshots |
 
 The overview includes review and product counts. Its observed-month filter also
 controls monthly metrics, rating distribution and the selected product trend.
@@ -44,7 +44,9 @@ shows the run ID and publication time of the Serving version currently being
 displayed. This remains distinct from the latest pipeline attempt: a failed or
 still-running attempt does not replace the last fully published tables. A run
 stopped by the Raw schema gate is shown as `SCHEMA_DRIFT_BLOCKED` with the held
-changes; the displayed tables stay on the last published version.
+changes, and a run stopped by the quality guard as `QUALITY_GUARD_BLOCKED` with
+the blocked checks; in both cases the displayed tables stay on the last
+published version.
 
 Review count is not sales, ratings 1–2 are not a text-sentiment model, and
 product price is a metadata snapshot rather than a review-time price. The
