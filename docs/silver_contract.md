@@ -43,7 +43,10 @@ in `silver.reviews` with `quality_status = 'WARNING'` and named
 `quality_issues`.
 
 `timestamp` is interpreted as Unix epoch milliseconds and becomes UTC
-`reviewed_at`. The original millisecond value is also retained.
+`reviewed_at`. The original millisecond value is also retained. A
+`reviewed_at` before 1995-01-01 is `TIMESTAMP_INVALID`: the data starts in
+1998, and a source that switched to seconds would otherwise put every review
+in January 1970 without any error.
 
 ## Product rules
 
@@ -52,6 +55,9 @@ blank, rating fields are invalid, price is negative, or it is a later duplicate
 of an already-seen `parent_asin`.
 
 Missing price, category, store, or category list is a warning, not a rejection.
+A price that is present but not a number, such as `"—"` or `"from 4.95"`, is
+the warning `PRICE_INVALID` instead of `PRICE_MISSING`; both are stored as
+null.
 Price is a product-metadata snapshot and is stored as `DECIMAL(12,2)`; it must
 not be interpreted as the price at review time.
 
