@@ -133,6 +133,72 @@ class EvaluateTest(BaselineTestCase):
         self.assertEqual(result["action"], REVIEW)
         self.assertEqual(list_versions(TABLE, self.root), [1])
 
+    def test_accepted_version_equals_new_schema_when_only_field_added(self):
+        evaluate(TABLE, self.v1, self.root)
+        evaluate(TABLE, self.v2, self.root)
+
+        self.assertEqual(load_baseline(TABLE, self.root)["schema"], self.v2)
+
+
+class ApprovedDecisionsTest(BaselineTestCase):
+    # Nguồn JSON: schema quan sát được không được ghi đè quyết định đã duyệt.
+
+    def approved(self):
+        return {
+            "title": {"type": "string", "nullable": True, "logical_type": None,
+                      "parameters": {}, "source_note": "Chốt nullable = true"},
+            "rating": {"type": "number", "nullable": False, "logical_type": None,
+                       "parameters": {}},
+        }
+
+    def observed(self, **extra_fields):
+        schema = {
+            "title": {"type": "string", "nullable": False, "logical_type": None,
+                      "parameters": {}, "observed_nullability": True},
+            "rating": {"type": "number", "nullable": False, "logical_type": None,
+                       "parameters": {}, "observed_nullability": True},
+        }
+        schema.update(extra_fields)
+        return schema
+
+    def test_auto_accept_keeps_approved_nullability_and_notes(self):
+        approve(TABLE, self.approved(), "Duyệt từng trường", self.root)
+        language = {"type": "string", "nullable": True, "logical_type": None,
+                    "parameters": {}, "observed_nullability": True}
+
+        result = evaluate(TABLE, self.observed(language=language), self.root)
+
+        self.assertEqual(result["action"], ACCEPT)
+        self.assertEqual(result["new_version"], 2)
+        schema = load_baseline(TABLE, self.root)["schema"]
+        self.assertTrue(schema["title"]["nullable"])
+        self.assertEqual(schema["title"]["source_note"], "Chốt nullable = true")
+        self.assertEqual(schema["language"], language)
+
+    def test_observation_without_changes_creates_no_version(self):
+        approve(TABLE, self.approved(), "Duyệt từng trường", self.root)
+
+        result = evaluate(TABLE, self.observed(), self.root)
+
+        self.assertEqual(result["action"], ACCEPT)
+        self.assertIsNone(result["new_version"])
+        self.assertEqual(list_versions(TABLE, self.root), [1])
+
+    def test_accepted_type_widening_updates_only_that_column(self):
+        approved = self.approved()
+        approved["count"] = {"type": "int32", "nullable": True, "logical_type": None,
+                             "parameters": {}, "description": "Số lượng"}
+        approve(TABLE, approved, "Duyệt", self.root)
+        widened = {"type": "int64", "nullable": True, "logical_type": None,
+                   "parameters": {}, "observed_nullability": True}
+
+        evaluate(TABLE, self.observed(count=widened), self.root)
+
+        schema = load_baseline(TABLE, self.root)["schema"]
+        self.assertEqual(schema["count"]["type"], "int64")
+        self.assertEqual(schema["count"]["description"], "Số lượng")
+        self.assertTrue(schema["title"]["nullable"])
+
 
 class EvaluateDependenciesTest(BaselineTestCase):
     def write_dependencies(self, document):

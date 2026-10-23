@@ -1,11 +1,19 @@
 import argparse
+import copy
 import json
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from schema_evolution.comparator import compare_schemas
+from schema_evolution.comparator import (
+    ADD_FIELD,
+    NULLABILITY_CHANGE,
+    PARAMETER_CHANGE,
+    REMOVE_FIELD,
+    TYPE_CHANGE,
+    compare_schemas,
+)
 from schema_evolution.dependencies import load_dependencies
 from schema_evolution.policy import ACCEPT, decide
 
@@ -90,6 +98,35 @@ def _describe(changes):
     return ", ".join(f"{change['change']} {change['field']}" for change in changes)
 
 
+# Khóa của một cột mà từng loại thay đổi được phép cập nhật khi tự động ACCEPT.
+CHANGE_KEYS = {
+    TYPE_CHANGE: ("type", "logical_type", "parameters"),
+    PARAMETER_CHANGE: ("parameters",),
+    NULLABILITY_CHANGE: ("nullable",),
+}
+
+
+def apply_accepted_changes(old_schema, new_schema, changes):
+    # Phiên bản mới = baseline cũ + đúng các thay đổi đã được ACCEPT. Không thay cả
+    # schema bằng schema quan sát được, để giữ quyết định đã duyệt (ví dụ trường
+    # khai báo nullable dù mẫu chưa có null, hay kiểu lấy theo tài liệu) và các ghi
+    # chú như description, source_note.
+    merged = copy.deepcopy(old_schema)
+    for change in changes:
+        field = change["field"]
+        if change["change"] == ADD_FIELD:
+            merged[field] = copy.deepcopy(new_schema[field])
+        elif change["change"] == REMOVE_FIELD:
+            merged.pop(field, None)
+        elif change["change"] in CHANGE_KEYS:
+            for key in CHANGE_KEYS[change["change"]]:
+                merged[field][key] = copy.deepcopy(new_schema[field].get(key))
+        else:
+            # Loại thay đổi chưa biết: lấy nguyên cột mới cho đúng với schema đã so.
+            merged[field] = copy.deepcopy(new_schema[field])
+    return merged
+
+
 def evaluate(table, new_schema, root=DEFAULT_ROOT, severity_actions=None,
              dependencies_root=None, apply=True):
     # So schema mới với baseline. Chỉ ACCEPT mới tự nâng phiên bản;
@@ -128,7 +165,7 @@ def evaluate(table, new_schema, root=DEFAULT_ROOT, severity_actions=None,
     if apply and decision["action"] == ACCEPT and decision["changes"]:
         document = save_version(
             table,
-            new_schema,
+            apply_accepted_changes(baseline["schema"], new_schema, decision["changes"]),
             f"Tự động ACCEPT: {_describe(decision['changes'])}",
             root,
         )
