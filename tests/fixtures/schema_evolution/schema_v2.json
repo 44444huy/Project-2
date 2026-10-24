@@ -1,0 +1,35 @@
+{
+  "age": {
+    "logical_type": null,
+    "nullable": true,
+    "parameters": {},
+    "type": "int32"
+  },
+  "balance": {
+    "logical_type": "org.apache.kafka.connect.data.Decimal",
+    "nullable": true,
+    "parameters": {
+      "connect.decimal.precision": "12",
+      "scale": "2"
+    },
+    "type": "bytes"
+  },
+  "email": {
+    "logical_type": null,
+    "nullable": true,
+    "parameters": {},
+    "type": "string"
+  },
+  "id": {
+    "logical_type": null,
+    "nullable": false,
+    "parameters": {},
+    "type": "int64"
+  },
+  "name": {
+    "logical_type": null,
+    "nullable": true,
+    "parameters": {},
+    "type": "string"
+  }
+}

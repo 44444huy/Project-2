@@ -1,0 +1,8 @@
+{
+    "severity_actions": {
+        "INFO": "ACCEPT",
+        "WARNING": "REVIEW",
+        "BREAKING": "BLOCK",
+        "CRITICAL": "BLOCK"
+    }
+}

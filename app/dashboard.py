@@ -162,7 +162,9 @@ def load_product_count():
 def load_rating_distribution(first_month, last_month):
     return query(
         """
-        SELECT bucket.rating, SUM(bucket.review_count) AS review_count
+        SELECT
+            bucket.rating,
+            SUM(bucket.review_count)::BIGINT AS review_count
         FROM serving.product_monthly_review_metrics AS metric
         CROSS JOIN LATERAL (
             VALUES
@@ -231,6 +233,99 @@ def load_pipeline_runs():
         LIMIT 20
         """
     )
+
+
+def load_schema_checks():
+    return query_uncached(
+        """
+        SELECT run_id, source_name, mode, action, baseline_version, records,
+               malformed, sampled_partitions, changes, error_message,
+               checked_at
+        FROM serving.schema_drift_events
+        ORDER BY checked_at DESC, source_name
+        LIMIT 20
+        """
+    )
+
+
+def load_quality_guard_checks(run_id):
+    return query_uncached(
+        """
+        SELECT check_name, source_name, metric_name, mode, action,
+               previous_value, current_value, limit_value, message
+        FROM serving.quality_guard_checks
+        WHERE run_id = %s
+        ORDER BY action DESC, source_name, check_name, metric_name
+        """,
+        (run_id,),
+    )
+
+
+def format_guard_value(check, value):
+    if value is None:
+        return ""
+    if check["check_name"] in ("REJECT_RATE", "ISSUE_RATE"):
+        return f"{100 * value:.4f}%"
+    return f"{value:,.0f}"
+
+
+def quality_guard_rows(checks):
+    return [
+        {
+            "source": check["source_name"],
+            "check": check["check_name"],
+            "metric": check["metric_name"],
+            "action": check["action"],
+            "previous": format_guard_value(check, check["previous_value"]),
+            "current": format_guard_value(check, check["current_value"]),
+            "limit": (
+                f"+{100 * check['limit_value']:g} pts"
+                if check["check_name"] in ("REJECT_RATE", "ISSUE_RATE")
+                and check["limit_value"] is not None
+                else (
+                    f"-{100 * check['limit_value']:g}%"
+                    if check["limit_value"] is not None
+                    else ""
+                )
+            ),
+        }
+        for check in checks
+    ]
+
+
+SCHEMA_HELD_ACTIONS = ("REVIEW", "BLOCK", "ERROR")
+
+
+def held_schema_summary(checks):
+    parts = []
+    for check in checks:
+        if check["action"] not in SCHEMA_HELD_ACTIONS:
+            continue
+        if check["action"] == "ERROR":
+            detail = check["error_message"] or "the check could not run"
+        else:
+            detail = ", ".join(
+                f"{change.get('change')} {change.get('field')}"
+                for change in check["changes"] or []
+                if change.get("action") in SCHEMA_HELD_ACTIONS
+            )
+        parts.append(f"{check['source_name']}: {check['action']} ({detail})")
+    return "; ".join(parts)
+
+
+def schema_change_rows(checks):
+    return [
+        {
+            "source": check["source_name"],
+            "field": change.get("field"),
+            "change": change.get("change"),
+            "severity": change.get("severity"),
+            "action": change.get("action"),
+            "reason": change.get("reason"),
+        }
+        for check in checks
+        for change in check["changes"] or []
+    ]
 
 
 def load_published_run():
@@ -490,8 +585,29 @@ with operations_tab:
     else:
         latest = runs[0]
         missing_metadata = load_missing_metadata_reviews()
+        try:
+            schema_checks = load_schema_checks()
+            schema_checks_error = None
+        except psycopg.Error as error:
+            schema_checks = []
+            schema_checks_error = error
+        latest_checks = [
+            check for check in schema_checks if check["run_id"] == latest["run_id"]
+        ]
+        schema_blocked = latest["status"] == "SCHEMA_DRIFT_BLOCKED"
+        try:
+            guard_checks = load_quality_guard_checks(latest["run_id"])
+            guard_checks_error = None
+        except psycopg.Error as error:
+            guard_checks = []
+            guard_checks_error = error
+        quality_blocked = latest["status"] == "QUALITY_GUARD_BLOCKED"
+
         operation_metrics = st.columns(5)
-        operation_metrics[0].metric("Latest status", latest["status"])
+        operation_metrics[0].metric(
+            "Latest status",
+            "BLOCKED" if schema_blocked or quality_blocked else latest["status"],
+        )
         operation_metrics[1].metric("Data mode", latest["data_mode"])
         operation_metrics[2].metric(
             "Duration",
@@ -509,6 +625,37 @@ with operations_tab:
                 f"({percentage(missing_metadata['missing_review_count'], missing_metadata['total_review_count'])})"
             ),
         )
+
+        if schema_blocked:
+            displayed = (
+                published_run["run_id"] if published_run else "no published version"
+            )
+            held = held_schema_summary(latest_checks)
+            st.error(
+                "**SCHEMA_DRIFT_BLOCKED**: the latest run was stopped by the Raw "
+                "schema gate before Bronze, so no table was changed and the "
+                f"dashboard still shows {displayed}. "
+                + (f"Held changes: {held}. " if held else "")
+                + "See the Raw schema gate section below, then follow "
+                "docs/schema_gate.md to approve a new baseline or fix the source."
+            )
+        if quality_blocked:
+            displayed = (
+                published_run["run_id"] if published_run else "no published version"
+            )
+            held = "; ".join(
+                f"{check['source_name']} {check['metric_name']}: {check['message']}"
+                for check in guard_checks
+                if check["action"] == "BLOCK"
+            )
+            st.error(
+                "**QUALITY_GUARD_BLOCKED**: Gold was rebuilt, but its quality changed "
+                "beyond the guard limits, so Publish was skipped and the dashboard "
+                f"still shows {displayed}. "
+                + (f"Blocked checks: {held} " if held else "")
+                + "If the change is intended, trigger the DAG again with "
+                '{"allow_quality_change": true}; see docs/quality_guard.md.'
+            )
 
         quality_rows = load_quality()
         status_counts = {
@@ -552,6 +699,93 @@ with operations_tab:
             width="stretch",
             hide_index=True,
         )
+
+        st.subheader("Raw schema gate")
+        st.caption(
+            "Before Bronze, a sample of every Raw part is compared with the "
+            "reviewed baseline in schemas/. In report mode differences are only "
+            "recorded; in block mode REVIEW, BLOCK or ERROR stops the run."
+        )
+        if schema_checks_error is not None:
+            st.info("Schema gate results are unavailable.")
+            st.caption(str(schema_checks_error))
+        elif not schema_checks:
+            st.info("No schema check has been recorded yet.")
+        elif not latest_checks:
+            st.info("The latest run has no schema check record.")
+        else:
+            check_metrics = st.columns(len(latest_checks))
+            for column, check in zip(check_metrics, latest_checks):
+                column.metric(
+                    f"{check['source_name'].capitalize()} schema",
+                    check["action"],
+                )
+                if check["records"] is not None:
+                    column.caption(
+                        f"{check['mode']} mode · baseline "
+                        f"v{check['baseline_version']} · "
+                        f"{check['records']:,} sampled rows"
+                    )
+            for check in latest_checks:
+                if check["error_message"]:
+                    st.warning(
+                        f"{check['source_name']}: {check['error_message']}"
+                    )
+            changes = schema_change_rows(latest_checks)
+            if changes:
+                st.dataframe(changes, width="stretch", hide_index=True)
+            else:
+                st.success("No difference from the reviewed baseline.")
+
+        if schema_checks:
+            with st.expander("Recent schema checks"):
+                st.dataframe(
+                    [
+                        {
+                            "run_id": check["run_id"],
+                            "source": check["source_name"],
+                            "mode": check["mode"],
+                            "action": check["action"],
+                            "baseline": check["baseline_version"],
+                            "sampled_rows": check["records"],
+                            "changes": len(check["changes"] or []),
+                            "checked_at": check["checked_at"],
+                        }
+                        for check in schema_checks
+                    ],
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        st.subheader("Quality guard")
+        st.caption(
+            "Before Publish, the run's Gold quality summary is compared with the "
+            "published version: reject rate, each issue rate and accepted rows."
+        )
+        if guard_checks_error is not None:
+            st.info("Quality guard results are unavailable.")
+            st.caption(str(guard_checks_error))
+        elif not guard_checks:
+            st.info("The latest run has no quality guard record.")
+        else:
+            actions = [check["action"] for check in guard_checks]
+            guard_metrics = st.columns(3)
+            guard_metrics[0].metric("Passed checks", actions.count("PASS"))
+            guard_metrics[1].metric("Blocked checks", actions.count("BLOCK"))
+            guard_metrics[2].metric("Overridden checks", actions.count("OVERRIDDEN"))
+            st.caption(f"{guard_checks[0]['mode']} mode")
+            flagged = [check for check in guard_checks if check["action"] != "PASS"]
+            if flagged:
+                st.dataframe(
+                    quality_guard_rows(flagged), width="stretch", hide_index=True
+                )
+            else:
+                st.success("Quality is within the guard limits.")
+            with st.expander("All quality checks"):
+                st.dataframe(
+                    quality_guard_rows(guard_checks), width="stretch", hide_index=True
+                )
+
         if latest["table_counts"]:
             st.subheader("Latest reconciled table counts")
             st.json(latest["table_counts"])

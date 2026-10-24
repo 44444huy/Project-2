@@ -108,6 +108,67 @@ class SimpleSilverJobTests(unittest.TestCase):
             rejected_row.rejection_reasons,
         )
 
+    def test_unreadable_price_is_invalid_not_missing(self):
+        product = {
+            "main_category": "Electronics",
+            "title": "Product",
+            "average_rating": 4.0,
+            "rating_number": 10,
+            "price": 9.99,
+            "store": "Store",
+            "categories": ["Electronics"],
+            "parent_asin": "P1",
+        }
+        rows = [
+            ("p1", "products.jsonl", 1, json.dumps(product), "parseable"),
+            ("p2", "products.jsonl", 2,
+             json.dumps({**product, "parent_asin": "P2", "price": "—"}), "parseable"),
+            ("p3", "products.jsonl", 3,
+             json.dumps({**product, "parent_asin": "P3", "price": "from 4.95"}),
+             "parseable"),
+            ("p4", "products.jsonl", 4,
+             json.dumps({**product, "parent_asin": "P4", "price": None}), "parseable"),
+        ]
+
+        clean, rejected = build_products(self.dataframe(rows))
+        issues = {
+            row.record_id: list(row.quality_issues)
+            for row in clean.orderBy("record_id").collect()
+        }
+
+        self.assertEqual(rejected.count(), 0)
+        self.assertEqual(issues["p1"], [])
+        self.assertEqual(issues["p2"], ["PRICE_INVALID"])
+        self.assertEqual(issues["p3"], ["PRICE_INVALID"])
+        self.assertEqual(issues["p4"], ["PRICE_MISSING"])
+
+    def test_review_before_1995_is_rejected(self):
+        review = {
+            "rating": 5.0,
+            "title": "Good",
+            "text": "Works",
+            "images": [],
+            "asin": "A1",
+            "parent_asin": "P1",
+            "user_id": "U1",
+            "timestamp": 1588687728923,
+            "helpful_vote": 0,
+            "verified_purchase": True,
+        }
+        # The same moment written in seconds lands in January 1970.
+        in_seconds = {**review, "asin": "A2", "timestamp": 1588687728}
+        bronze = self.dataframe([
+            ("r1", "reviews.jsonl", 1, json.dumps(review), "parseable"),
+            ("r2", "reviews.jsonl", 2, json.dumps(in_seconds), "parseable"),
+        ])
+
+        clean, rejected = build_reviews(bronze)
+
+        self.assertEqual([row.record_id for row in clean.collect()], ["r1"])
+        self.assertEqual(
+            list(rejected.collect()[0].rejection_reasons), ["TIMESTAMP_INVALID"]
+        )
+
     def test_review_product_is_left_join(self):
         reviews = self.spark.createDataFrame([
             (

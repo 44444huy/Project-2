@@ -1,0 +1,119 @@
+{
+  "created_at": "2026-10-23T05:47:36+00:00",
+  "reason": "Duyệt thủ công: Duyệt từng trường với người dùng ngày 23/10/2026: tên trường và kiểu theo tài liệu chính thức, nullable theo dữ liệu và vai trò trong Silver",
+  "schema": {
+    "asin": {
+      "description": "Mã biến thể sản phẩm",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "helpful_vote": {
+      "description": "Số lượt bình chọn hữu ích",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "integer"
+    },
+    "parent_asin": {
+      "description": "Mã sản phẩm cha, khóa nối với products",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "rating": {
+      "description": "Điểm 1–5 của review",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "number"
+    },
+    "text": {
+      "description": "Nội dung review",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Dữ liệu chưa từng null (220/1.000.000 là chuỗi rỗng), nhưng chốt nullable = true: Silver coi text là tùy chọn (chỉ WARNING); review thiếu text vẫn có rating.",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "Thời điểm review, Unix epoch mili-giây",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Tài liệu: int, 'unix time', không nói đơn vị. Dữ liệu: 13 chữ số, tức mili-giây.",
+      "type": "integer"
+    },
+    "title": {
+      "description": "Tiêu đề review",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Dữ liệu chưa từng null, nhưng chốt nullable = true: Silver coi title là tùy chọn (chỉ WARNING), không đáng dừng pipeline nếu nguồn bắt đầu gửi null.",
+      "type": "string"
+    },
+    "user_id": {
+      "description": "Mã người đánh giá (ẩn danh)",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "verified_purchase": {
+      "description": "Đã xác minh mua hàng",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "boolean"
+    }
+  },
+  "table": "reviews",
+  "version": 1
+}

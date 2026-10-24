@@ -145,8 +145,12 @@ dashboard. One-shot setup services should finish with `Exited (0)`.
 
 Open Airflow at `http://localhost:8080`, sign in with the local credentials in
 `.env`, and trigger `product_review_lakehouse`. Its task order is
-`record_run_start -> bronze -> silver -> gold -> publish -> finalize_run`.
-Only one DAG run and one stage are active at a time. Airflow owns task retries,
+`record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run`.
+`schema_check` compares the Raw structure with the reviewed baseline
+before Bronze, and `quality_guard` compares Gold quality with the
+published version before Publish; see `docs/schema_gate.md` and
+`docs/quality_guard.md`. Only one DAG run and one stage are
+active at a time. Airflow owns task retries,
 while each data task calls its Spark application directly with `spark-submit`.
 
 Each run is written to `serving.pipeline_runs` with its source and runtime

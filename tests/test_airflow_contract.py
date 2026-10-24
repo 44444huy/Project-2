@@ -19,14 +19,28 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn('max_active_runs=1', source)
         self.assertIn('max_active_tasks=1', source)
         self.assertIn(
-            'start >> bronze >> silver >> gold >> publish >> finalize',
+            'start >> schema_check >> bronze >> silver >> gold >> quality_guard',
             source,
         )
+        self.assertIn('>> publish >> finalize', source)
+        self.assertIn(
+            '"quality_guard": "/opt/project/src/operations/quality_guard.py"',
+            source,
+        )
+        self.assertIn("allow_quality_change", source)
         self.assertIn("def spark_task(", source)
         self.assertIn(
             'bash_command=f"{SPARK_SUBMIT_BIN} {application}"',
             source,
         )
+        self.assertIn(
+            '"schema_check": '
+            '"/opt/project/src/schema_evolution/check_raw_schema.py"',
+            source,
+        )
+        # Cổng schema thoát mã 99 khi chặn: các bước sau bị skip, không retry.
+        self.assertIn("skip_on_exit_code=BLOCKED_EXIT_CODE", source)
+        self.assertIn("BLOCKED_EXIT_CODE = 99", source)
         expected_applications = {
             "bronze": "src/bronze/load_product_reviews_bronze.py",
             "silver": "src/silver/build_product_reviews_silver.py",
@@ -67,6 +81,13 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn("- minio_data:/data", compose)
         self.assertIn("- ./airflow/logs:/opt/airflow/logs", compose)
         self.assertIn("SPARK_LOCAL_DIR: /tmp/spark-local", compose)
+        self.assertIn('SCHEMA_CHECK_MODE: "${SCHEMA_CHECK_MODE:-report}"', compose)
+        self.assertIn("- ./schemas:/opt/project/schemas:ro", compose)
+        self.assertIn("CREATE TABLE IF NOT EXISTS serving.schema_drift_events", compose)
+        self.assertIn("'SCHEMA_DRIFT_BLOCKED'", compose)
+        self.assertIn("'QUALITY_GUARD_BLOCKED'", compose)
+        self.assertIn('QUALITY_GUARD_MODE: "${QUALITY_GUARD_MODE:-report}"', compose)
+        self.assertIn("CREATE TABLE IF NOT EXISTS serving.quality_guard_checks", compose)
         self.assertNotIn("./runtime", compose)
         self.assertNotIn("data_survey", compose)
 

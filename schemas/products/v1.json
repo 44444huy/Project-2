@@ -1,0 +1,135 @@
+{
+  "created_at": "2026-10-23T05:47:36+00:00",
+  "reason": "Duyệt thủ công: Duyệt từng trường với người dùng ngày 23/10/2026: tên trường và kiểu theo tài liệu chính thức, nullable theo dữ liệu và vai trò trong Silver",
+  "schema": {
+    "average_rating": {
+      "description": "Điểm trung bình trong metadata",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Dữ liệu chưa từng null, nhưng chốt nullable = true: Silver không bắt buộc trường này, Gold chỉ lưu để tham khảo.",
+      "type": "number"
+    },
+    "categories": {
+      "description": "Danh sách danh mục phân cấp, từ rộng đến hẹp, ví dụ [\"Electronics\", \"Television & Video\", \"Video Glasses\"]; 7,7% là danh sách rỗng",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Dữ liệu chưa từng null, nhưng chốt nullable = true: Silver chỉ cảnh báo CATEGORIES_EMPTY. Giữ trong cổng vì sẽ dùng để phân tích theo danh mục.",
+      "type": "array"
+    },
+    "categories[]": {
+      "description": "Một cấp danh mục trong danh sách categories",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "details": {
+      "description": "Thông số dạng key-value, mỗi sản phẩm một bộ key khác nhau (931 key), ví dụ Brand, Manufacturer, Date First Available; chỉ kiểm tra kiểu object, không đi vào trong",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": true,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Chốt nullable = true: hiện chưa lớp nào dùng. Giữ trong cổng để bảo vệ phân tích theo Brand / Date First Available sau này; ví dụ trên Hugging Face lưu details dạng chuỗi JSON, nếu nguồn đổi sang dạng đó thì cổng chặn.",
+      "type": "object"
+    },
+    "main_category": {
+      "description": "Nhóm sản phẩm chính",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.066045,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "parent_asin": {
+      "description": "Mã sản phẩm, khóa của products",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "price": {
+      "description": "Giá lúc crawl; chuỗi như '—' hoặc 'from 4.95' là giá trị lỗi",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.672819,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {
+        "string": 0.0006
+      },
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Tài liệu: float, giá USD lúc crawl. Dữ liệu: 0,06% giá trị khác null là chuỗi lỗi ('—', 'from 4.95').",
+      "type": "number"
+    },
+    "rating_number": {
+      "description": "Số lượt đánh giá trong metadata",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "source_note": "Dữ liệu chưa từng null, nhưng chốt nullable = true: Silver không bắt buộc trường này, Gold chỉ lưu để tham khảo.",
+      "type": "integer"
+    },
+    "store": {
+      "description": "Cửa hàng hoặc thương hiệu",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.005913,
+      "nullable": true,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    },
+    "title": {
+      "description": "Tên sản phẩm",
+      "documented": true,
+      "logical_type": null,
+      "null_rate": 0.0,
+      "nullable": false,
+      "opaque": false,
+      "other_types": {},
+      "parameters": {},
+      "presence_rate": 1.0,
+      "type": "string"
+    }
+  },
+  "table": "products",
+  "version": 1
+}

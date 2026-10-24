@@ -4,13 +4,19 @@
 run in dependency order:
 
 ```text
-record_run_start -> bronze -> silver -> gold -> publish -> finalize_run
+record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run
 ```
 
 The DAG allows one active run and one active task, so two Spark stages cannot
 write the lakehouse concurrently. Airflow is the only pipeline entrypoint and
 owns task retries. Each data task invokes its Spark application directly with
 `spark-submit`; a nonzero exit code is returned directly to Airflow.
+
+`schema_check` compares the Raw structure with the reviewed baseline in
+`schemas/` and, in block mode, stops the run as `SCHEMA_DRIFT_BLOCKED`; see
+`docs/schema_gate.md`. `quality_guard` runs after Gold and compares its
+quality summary with the published version; in block mode it stops the run as
+`QUALITY_GUARD_BLOCKED` before Publish; see `docs/quality_guard.md`.
 
 `record_run_start` creates a `RUNNING` row in `serving.pipeline_runs` with the
 source configuration, runtime configuration, code version and Airflow log URL.

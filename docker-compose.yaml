@@ -10,6 +10,7 @@ x-airflow-common: &airflow-common
     - ./airflow/dags:/opt/airflow/dags:ro
     - ./src:/opt/project/src:ro
     - ./config:/opt/project/config:ro
+    - ./schemas:/opt/project/schemas:ro
     - ./scripts:/opt/project/scripts:ro
     - ./spark/conf/spark-defaults.conf.template:/opt/project/spark-defaults.conf.template:ro
     - ./airflow/logs:/opt/airflow/logs
@@ -31,6 +32,12 @@ x-airflow-common: &airflow-common
     AIRFLOW_TASK_RETRIES: "${AIRFLOW_TASK_RETRIES:-1}"
     AIRFLOW_RETRY_DELAY_SECONDS: "${AIRFLOW_RETRY_DELAY_SECONDS:-60}"
     DATA_MODE: "${DATA_MODE:-million}"
+    SCHEMA_CHECK_MODE: "${SCHEMA_CHECK_MODE:-report}"
+    SCHEMA_CHECK_LINES_PER_PART: "${SCHEMA_CHECK_LINES_PER_PART:-20000}"
+    QUALITY_GUARD_MODE: "${QUALITY_GUARD_MODE:-report}"
+    QUALITY_GUARD_MAX_REJECT_RATE_INCREASE: "${QUALITY_GUARD_MAX_REJECT_RATE_INCREASE:-0.01}"
+    QUALITY_GUARD_MAX_ISSUE_RATE_INCREASE: "${QUALITY_GUARD_MAX_ISSUE_RATE_INCREASE:-0.05}"
+    QUALITY_GUARD_MAX_ACCEPTED_DROP: "${QUALITY_GUARD_MAX_ACCEPTED_DROP:-0.05}"
     CODE_VERSION: "${CODE_VERSION:-local-working-tree}"
     SPARK_MASTER: "${SPARK_MASTER:-local[2]}"
     SPARK_DRIVER_MEMORY: "${SPARK_DRIVER_MEMORY:-2g}"
@@ -101,8 +108,11 @@ services:
         CREATE TABLE IF NOT EXISTS serving.pipeline_runs (
             run_id TEXT PRIMARY KEY,
             dag_id TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (
-                status IN ('RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED')
+            status TEXT NOT NULL CONSTRAINT pipeline_runs_status_check CHECK (
+                status IN (
+                    'RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED',
+                    'SCHEMA_DRIFT_BLOCKED', 'QUALITY_GUARD_BLOCKED'
+                )
             ),
             data_mode TEXT NOT NULL,
             review_limit BIGINT,
@@ -162,6 +172,52 @@ services:
 
         CREATE INDEX IF NOT EXISTS pipeline_runs_started_at_idx
           ON serving.pipeline_runs (started_at DESC);
+
+        ALTER TABLE serving.pipeline_runs
+          DROP CONSTRAINT IF EXISTS pipeline_runs_status_check;
+        ALTER TABLE serving.pipeline_runs
+          ADD CONSTRAINT pipeline_runs_status_check CHECK (
+            status IN (
+              'RUNNING', 'PUBLISHED', 'SUCCESS', 'FAILED',
+              'SCHEMA_DRIFT_BLOCKED', 'QUALITY_GUARD_BLOCKED'
+            )
+          );
+
+        CREATE TABLE IF NOT EXISTS serving.schema_drift_events (
+            run_id TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (
+                action IN ('ACCEPT', 'REVIEW', 'BLOCK', 'ERROR')
+            ),
+            baseline_version INTEGER,
+            records BIGINT,
+            malformed BIGINT,
+            sampled_partitions INTEGER,
+            lines_per_partition INTEGER,
+            raw_path TEXT,
+            changes JSONB NOT NULL DEFAULT '[]'::jsonb,
+            error_message TEXT,
+            checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (run_id, source_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS serving.quality_guard_checks (
+            run_id TEXT NOT NULL,
+            check_name TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (
+                action IN ('PASS', 'BLOCK', 'OVERRIDDEN')
+            ),
+            previous_value DOUBLE PRECISION,
+            current_value DOUBLE PRECISION,
+            limit_value DOUBLE PRECISION,
+            message TEXT,
+            checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (run_id, check_name, source_name, metric_name)
+        );
         SQL
     depends_on:
       postgres:
@@ -486,6 +542,7 @@ services:
       - ./src:/opt/project/src:ro
       - ./config:/opt/project/config:ro
       - ./tests:/opt/project/tests:ro
+      - ./schemas:/opt/project/schemas:ro
       - ./scripts:/opt/project/scripts:ro
       - ./airflow:/opt/project/airflow:ro
       - ./docker-compose.yaml:/opt/project/docker-compose.yaml:ro

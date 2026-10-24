@@ -20,6 +20,11 @@ PRODUCTS_SILVER = "polaris.silver.products"
 REJECTED_SILVER = "polaris.silver.rejected_rows"
 REVIEW_PRODUCT_SILVER = "polaris.silver.review_product"
 
+# Amazon review data starts in 1998. A review dated before this is treated as
+# invalid, which also catches a source switching timestamps from milliseconds
+# to seconds (seconds read as milliseconds land in January 1970).
+MIN_REVIEWED_AT = "1995-01-01 00:00:00"
+
 
 REVIEW_IMAGE_SCHEMA = StructType([
     StructField("small_image_url", StringType(), True),
@@ -135,6 +140,7 @@ def build_reviews(bronze_df):
             & (
                 (F.col("data.timestamp") <= 0)
                 | (F.col("reviewed_at") > F.current_timestamp())
+                | (F.col("reviewed_at") < F.to_timestamp(F.lit(MIN_REVIEWED_AT)))
             ),
             "TIMESTAMP_INVALID",
         ),
@@ -240,6 +246,9 @@ def build_products(bronze_df):
             "categories",
             normalize_string_array(F.col("data.categories")),
         )
+        # The raw text tells an absent price apart from one that from_json could
+        # not read as a number, such as "—" or "from 4.95".
+        .withColumn("raw_price", F.get_json_object("raw_json", "$.price"))
         .withColumn("details_json", F.get_json_object("raw_json", "$.details"))
         .withColumn("author_json", F.get_json_object("raw_json", "$.author"))
         .withColumn(
@@ -288,7 +297,11 @@ def build_products(bronze_df):
     warning_reasons = issue_array(
         (F.col("data.main_category").isNull(), "MAIN_CATEGORY_MISSING"),
         (F.col("data.store").isNull(), "STORE_MISSING"),
-        (F.col("data.price").isNull(), "PRICE_MISSING"),
+        (F.col("raw_price").isNull(), "PRICE_MISSING"),
+        (
+            F.col("raw_price").isNotNull() & F.col("data.price").isNull(),
+            "PRICE_INVALID",
+        ),
         (
             F.col("data.categories").isNull()
             | (F.size(F.col("data.categories")) == 0),

@@ -1,0 +1,31 @@
+{
+  "bronze": ["*"],
+  "silver": [
+    "author",
+    "average_rating",
+    "bought_together",
+    "categories",
+    "description",
+    "details",
+    "features",
+    "images",
+    "main_category",
+    "parent_asin",
+    "price",
+    "rating_number",
+    "store",
+    "subtitle",
+    "title",
+    "videos"
+  ],
+  "gold": [
+    "average_rating",
+    "categories",
+    "main_category",
+    "parent_asin",
+    "price",
+    "rating_number",
+    "store",
+    "title"
+  ]
+}
