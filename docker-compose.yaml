@@ -15,6 +15,7 @@ x-airflow-common: &airflow-common
     - ./spark/conf/spark-defaults.conf.template:/opt/project/spark-defaults.conf.template:ro
     - ./airflow/logs:/opt/airflow/logs
     - spark_ivy_cache:/tmp/.ivy2
+    - hf_cache:/opt/hf-cache
   environment: &airflow-common-environment
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -35,6 +36,8 @@ x-airflow-common: &airflow-common
     SCHEMA_CHECK_MODE: "${SCHEMA_CHECK_MODE:-report}"
     SCHEMA_CHECK_LINES_PER_PART: "${SCHEMA_CHECK_LINES_PER_PART:-20000}"
     QUALITY_GUARD_MODE: "${QUALITY_GUARD_MODE:-report}"
+    SENTIMENT_DEVICE: "${SENTIMENT_DEVICE:-cuda}"
+    SENTIMENT_BATCH_SIZE: "${SENTIMENT_BATCH_SIZE:-64}"
     QUALITY_GUARD_MAX_REJECT_RATE_INCREASE: "${QUALITY_GUARD_MAX_REJECT_RATE_INCREASE:-0.01}"
     QUALITY_GUARD_MAX_ISSUE_RATE_INCREASE: "${QUALITY_GUARD_MAX_ISSUE_RATE_INCREASE:-0.05}"
     QUALITY_GUARD_MAX_ACCEPTED_DROP: "${QUALITY_GUARD_MAX_ACCEPTED_DROP:-0.05}"
@@ -572,3 +575,4 @@ volumes:
   postgres_data:
   minio_data:
   spark_ivy_cache:
+  hf_cache:
