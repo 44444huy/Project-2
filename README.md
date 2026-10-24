@@ -145,7 +145,7 @@ dashboard. One-shot setup services should finish with `Exited (0)`.
 
 Open Airflow at `http://localhost:8080`, sign in with the local credentials in
 `.env`, and trigger `product_review_lakehouse`. Its task order is
-`record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run`.
+`record_run_start -> schema_check -> bronze -> silver -> sentiment -> gold -> quality_guard -> publish -> finalize_run`.
 `schema_check` compares the Raw structure with the reviewed baseline
 before Bronze, and `quality_guard` compares Gold quality with the
 published version before Publish; see `docs/schema_gate.md` and

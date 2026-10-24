@@ -6,8 +6,9 @@ MinIO -> Spark -> Iceberg Bronze/Silver/Gold (Polaris catalog) -> PostgreSQL
 `product_review_lakehouse`. `README.md` has the flow and the run steps; the
 contracts live in `docs/`.
 
-DAG order: `record_run_start -> schema_check -> bronze -> silver -> gold ->
-quality_guard -> publish -> finalize_run`. One run and one task at a time.
+DAG order: `record_run_start -> schema_check -> bronze -> silver -> sentiment ->
+gold -> quality_guard -> publish -> finalize_run`. `sentiment` needs the GPU
+override (`docker-compose.gpu.yaml`); see `docs/sentiment.md`. One run and one task at a time.
 
 ## Run and test
 

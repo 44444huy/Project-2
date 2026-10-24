@@ -6,7 +6,7 @@ was reviewed and approved, so a renamed key or a changed type cannot silently
 empty Silver, Gold and the dashboard.
 
 ```text
-record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run
+record_run_start -> schema_check -> bronze -> silver -> sentiment -> gold -> quality_guard -> publish -> finalize_run
 ```
 
 ## How it works

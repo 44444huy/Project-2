@@ -9,7 +9,7 @@ rejected by Silver for a format change deep inside a part, or a much smaller
 batch.
 
 ```text
-record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run
+record_run_start -> schema_check -> bronze -> silver -> sentiment -> gold -> quality_guard -> publish -> finalize_run
 ```
 
 ## Checks

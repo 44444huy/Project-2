@@ -12,6 +12,7 @@ ICEBERG_TABLES = [
     "polaris.silver.products",
     "polaris.silver.rejected_rows",
     "polaris.silver.review_product",
+    "polaris.silver.review_sentiment",
     "polaris.gold.monthly_review_metrics",
     "polaris.gold.product_review_metrics",
     "polaris.gold.product_monthly_review_metrics",
