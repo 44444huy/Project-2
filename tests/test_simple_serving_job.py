@@ -3,6 +3,8 @@ import unittest
 from pyspark.sql import SparkSession
 
 from serving.publish_gold_to_postgres import (
+    RECONCILIATION_RULES,
+    TABLES,
     assert_reconciled,
     atomic_swap_statements,
     execute_publish_transaction,
@@ -130,6 +132,12 @@ class SimpleServingJobTests(unittest.TestCase):
             ),
             "serving.category_rating_metrics": "serving.category__staging",
             "serving.data_quality_summary": "serving.quality__staging",
+            "serving.monthly_sentiment_metrics": (
+                "serving.monthly_sentiment__staging"
+            ),
+            "serving.product_sentiment_metrics": (
+                "serving.product_sentiment__staging"
+            ),
         }
         statements = staging_optimization_statements(staged)
 
@@ -150,6 +158,18 @@ class SimpleServingJobTests(unittest.TestCase):
             statements,
         )
         self.assertIn('ANALYZE "serving"."quality__staging"', statements)
+        self.assertIn(
+            'CREATE UNIQUE INDEX ON "serving"."product_sentiment__staging" '
+            '(parent_asin)',
+            statements,
+        )
+        self.assertIn(
+            'ANALYZE "serving"."monthly_sentiment__staging"', statements
+        )
+
+    def test_every_published_table_has_reconciliation_rules(self):
+        self.assertEqual(set(TABLES), set(RECONCILIATION_RULES))
+        self.assertEqual(len(TABLES), 7)
 
     def test_transaction_rolls_back_on_swap_failure(self):
         connection = FakeConnection(fail_on="second statement")

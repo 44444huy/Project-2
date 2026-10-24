@@ -93,9 +93,11 @@ class AirflowContractTests(unittest.TestCase):
         self.assertNotIn("data_survey", compose)
 
     def test_finalizer_covers_all_lakehouse_and_serving_tables(self):
-        self.assertEqual(len(ICEBERG_TABLES), 12)
+        self.assertEqual(len(ICEBERG_TABLES), 14)
         self.assertIn("polaris.silver.review_sentiment", ICEBERG_TABLES)
-        self.assertEqual(len(SERVING_TABLES), 5)
+        self.assertIn("polaris.gold.product_sentiment_metrics", ICEBERG_TABLES)
+        self.assertEqual(len(SERVING_TABLES), 7)
+        self.assertIn("serving.monthly_sentiment_metrics", SERVING_TABLES)
         self.assertIn("polaris.bronze.reviews_raw", ICEBERG_TABLES)
         self.assertIn("polaris.gold.data_quality_summary", ICEBERG_TABLES)
         self.assertIn("serving.product_review_metrics", SERVING_TABLES)

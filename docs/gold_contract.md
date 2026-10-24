@@ -1,8 +1,10 @@
 # Gold data contract
 
 Gold is implemented by `src/gold/build_product_review_gold.py`. The job reads
-only committed Silver tables and rebuilds five Iceberg tables with
-`INSERT OVERWRITE`.
+only committed Silver tables and rebuilds seven Iceberg tables with
+`INSERT OVERWRITE`. The two sentiment marts also read
+`polaris.silver.review_sentiment`, written by the `sentiment` task
+(`docs/sentiment.md`).
 
 ## `polaris.gold.monthly_review_metrics`
 
@@ -67,6 +69,27 @@ Grain: source, metric type and metric name.
 The verified profile contains 14 summary rows. Status totals reconcile to
 1,000,000 review rows and 1,610,012 product input rows.
 
+## `polaris.gold.monthly_sentiment_metrics`
+
+Grain: one observed review month.
+
+Reviews are left-joined to their sentiment label, so `review_count` counts
+every review and `scored_review_count` those with a label. Measures:
+
+- `positive_count`, `neutral_count`, `negative_count` and their rates;
+- `high_rating_negative_count`: 4–5 stars with negative text;
+- `low_rating_positive_count`: 1–2 stars with positive text;
+- `average_rating`.
+
+All rates divide by `scored_review_count`, not `review_count`. The `neutral`
+label is weak (see `docs/sentiment.md`); use positive and negative for trends.
+
+## `polaris.gold.product_sentiment_metrics`
+
+Grain: one `parent_asin` that has reviews. Same measures as the monthly
+sentiment mart. Product attributes are not copied; join
+`product_review_metrics` on `parent_asin`.
+
 ## Reconciliation invariants
 
 - monthly `SUM(review_count) = silver.reviews` count;
@@ -74,6 +97,10 @@ The verified profile contains 14 summary rows. Status totals reconcile to
 - product-monthly `SUM(review_count) = silver.reviews` count;
 - product-monthly rating 1–5 sums equal its review count;
 - category-rating `SUM(review_count) = silver.review_product` count;
+- monthly and product sentiment `SUM(review_count) = silver.reviews` count,
+  and `SUM(scored_review_count) = silver.review_sentiment` count;
+- in both sentiment marts, positive + neutral + negative equals
+  `scored_review_count`;
 - product Gold has one row per distinct unioned `parent_asin`;
 - rates remain between 0 and 1;
 - reruns replace rather than append aggregate rows.

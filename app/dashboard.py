@@ -197,6 +197,74 @@ def load_product_monthly(parent_asin, first_month, last_month):
     )
 
 
+def load_sentiment_overview(first_month, last_month):
+    return query(
+        """
+        SELECT
+            SUM(review_count) AS review_count,
+            SUM(scored_review_count) AS scored_review_count,
+            SUM(positive_count) AS positive_count,
+            SUM(neutral_count) AS neutral_count,
+            SUM(negative_count) AS negative_count,
+            SUM(high_rating_negative_count) AS high_rating_negative_count,
+            SUM(low_rating_positive_count) AS low_rating_positive_count
+        FROM serving.monthly_sentiment_metrics
+        WHERE review_month BETWEEN %s AND %s
+        """,
+        (first_month, last_month),
+    )[0]
+
+
+def load_monthly_sentiment(first_month, last_month):
+    return query(
+        """
+        SELECT
+            sentiment.review_month,
+            sentiment.scored_review_count,
+            100 * sentiment.positive_rate AS positive_percent,
+            100 * sentiment.neutral_rate AS neutral_percent,
+            100 * sentiment.negative_rate AS negative_percent,
+            100 * review.low_rating_rate AS low_rating_percent,
+            100 * sentiment.high_rating_negative_rate
+                AS high_rating_negative_percent,
+            100 * sentiment.low_rating_positive_rate
+                AS low_rating_positive_percent
+        FROM serving.monthly_sentiment_metrics AS sentiment
+        JOIN serving.monthly_review_metrics AS review
+          ON review.review_month = sentiment.review_month
+        WHERE sentiment.review_month BETWEEN %s AND %s
+        ORDER BY sentiment.review_month
+        """,
+        (first_month, last_month),
+    )
+
+
+def load_negative_products(minimum_scored_reviews):
+    return query(
+        """
+        SELECT
+            sentiment.parent_asin,
+            product.product_title,
+            product.main_category,
+            sentiment.scored_review_count,
+            100 * sentiment.negative_rate AS negative_percent,
+            100 * sentiment.positive_rate AS positive_percent,
+            100 * product.low_rating_rate AS low_rating_percent,
+            sentiment.average_rating,
+            sentiment.high_rating_negative_count
+        FROM serving.product_sentiment_metrics AS sentiment
+        LEFT JOIN serving.product_review_metrics AS product
+          ON product.parent_asin = sentiment.parent_asin
+        WHERE sentiment.scored_review_count >= %s
+        ORDER BY sentiment.negative_rate DESC,
+                 sentiment.scored_review_count DESC,
+                 sentiment.parent_asin
+        LIMIT 50
+        """,
+        (minimum_scored_reviews,),
+    )
+
+
 def load_quality():
     return query(
         """
@@ -401,8 +469,9 @@ with st.sidebar:
     st.info(
         scope_note
         + "Review count is not sales volume, ratings 1–2 are low ratings "
-        "rather than text sentiment, and price is the product metadata "
-        "snapshot rather than the price at review time."
+        "(text sentiment is a separate model label, see the Sentiment tab), "
+        "and price is the product metadata snapshot rather than the price at "
+        "review time."
     )
     selected_period = st.date_input(
         "Observed review period",
@@ -464,9 +533,21 @@ if published_run:
         f"published {published_run['published_at']:%Y-%m-%d %H:%M:%S}"
     )
 
-monthly_tab, products_tab, categories_tab, quality_tab, operations_tab = st.tabs(
-    ["Monthly", "Products", "Category & rating", "Data quality", "Operations"]
-)
+(
+    monthly_tab,
+    products_tab,
+    categories_tab,
+    sentiment_tab,
+    quality_tab,
+    operations_tab,
+) = st.tabs([
+    "Monthly",
+    "Products",
+    "Category & rating",
+    "Sentiment",
+    "Data quality",
+    "Operations",
+])
 
 with monthly_tab:
     st.subheader("Review activity by observed month")
@@ -558,6 +639,100 @@ with categories_tab:
         st.warning(
             "These reviews did not match a product in the complete "
             "metadata source. They are retained rather than silently dropped."
+        )
+
+with sentiment_tab:
+    st.caption(
+        "Each review's title and text are labelled positive, neutral or "
+        "negative by a pretrained model (twitter-roberta-base-sentiment, not "
+        "trained on this data). Against 500 reference labels it agreed 80.6% "
+        "of the time; positive and negative are reliable enough for trends, "
+        "but neutral is weak (F1 0.30) and mixed reviews often come out "
+        "positive. See docs/sentiment.md."
+    )
+    try:
+        sentiment_overview = load_sentiment_overview(
+            selected_first, selected_last
+        )
+        monthly_sentiment = load_monthly_sentiment(
+            selected_first, selected_last
+        )
+    except psycopg.Error as error:
+        sentiment_overview = None
+        st.info(
+            "Sentiment tables are not published yet. Trigger the Airflow DAG "
+            "with the GPU override and wait for publication to finish."
+        )
+        st.caption(str(error))
+
+    if sentiment_overview is not None:
+        scored = sentiment_overview["scored_review_count"] or 0
+        sentiment_metrics = st.columns(5)
+        sentiment_metrics[0].metric("Scored reviews", f"{scored:,}")
+        for column, label in zip(
+            sentiment_metrics[1:4], ("positive", "negative", "neutral")
+        ):
+            count = sentiment_overview[f"{label}_count"] or 0
+            column.metric(
+                label.capitalize() + (" (weak)" if label == "neutral" else ""),
+                f"{count:,} ({percentage(count, scored)})",
+            )
+        disagreement = (
+            (sentiment_overview["high_rating_negative_count"] or 0)
+            + (sentiment_overview["low_rating_positive_count"] or 0)
+        )
+        sentiment_metrics[4].metric(
+            "Text disagrees with stars",
+            f"{disagreement:,} ({percentage(disagreement, scored)})",
+        )
+        unscored = (sentiment_overview["review_count"] or 0) - scored
+        if unscored:
+            st.warning(
+                f"{unscored:,} reviews in this period have no sentiment label; "
+                "rates use scored reviews only."
+            )
+
+        st.subheader("Positive and negative text by month (%)")
+        st.line_chart(
+            monthly_sentiment,
+            x="review_month",
+            y=["positive_percent", "negative_percent"],
+        )
+        st.subheader("Negative text vs 1–2 star ratings (%)")
+        st.caption(
+            "Both measure dissatisfaction: one from the stars, one from the "
+            "words. A gap means customers write more (or less) negatively "
+            "than they rate."
+        )
+        st.line_chart(
+            monthly_sentiment,
+            x="review_month",
+            y=["negative_percent", "low_rating_percent"],
+        )
+        st.subheader("Text that disagrees with the stars (%)")
+        st.caption(
+            "4–5 stars with negative text, and 1–2 stars with positive text. "
+            "Some are model mistakes; others are sarcasm or reviews that "
+            "praise the product but complain about delivery."
+        )
+        st.line_chart(
+            monthly_sentiment,
+            x="review_month",
+            y=["high_rating_negative_percent", "low_rating_positive_percent"],
+        )
+
+        st.subheader("Products with the most negative text")
+        minimum_scored = st.number_input(
+            "Minimum scored reviews",
+            min_value=1,
+            value=50,
+            step=10,
+            help="Over the whole published dataset, not the selected period.",
+        )
+        st.dataframe(
+            load_negative_products(minimum_scored),
+            width="stretch",
+            hide_index=True,
         )
 
 with quality_tab:

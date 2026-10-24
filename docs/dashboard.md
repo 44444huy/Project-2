@@ -6,7 +6,7 @@ does not query MinIO, Polaris or Iceberg directly.
 
 ## Pages and sources
 
-The single page has five tabs. A global observed-month range filters the
+The single page has six tabs. A global observed-month range filters the
 overview and monthly series without changing the published dataset version.
 
 | Tab | PostgreSQL source | Purpose |
@@ -14,6 +14,7 @@ overview and monthly series without changing the published dataset version.
 | Monthly | monthly and product-monthly Serving marts | overview counts, time-filtered review trends and rating distribution |
 | Products | product and product-monthly Serving marts | search/rank products and inspect the selected product trend by month |
 | Category & rating | `serving.category_rating_metrics` | inspect rating distribution within one product group |
+| Sentiment | `serving.monthly_sentiment_metrics`, `serving.product_sentiment_metrics` (joined to the monthly and product marts) | label shares, positive/negative trend, negative text vs 1–2 stars, text that disagrees with the stars, products with the most negative text |
 | Data quality | `serving.data_quality_summary` | inspect accepted statuses and named source issues |
 | Operations | `serving.pipeline_runs`, `serving.schema_drift_events`, `serving.quality_guard_checks` | inspect the latest run status, duration, code version, Raw schema gate and quality guard results, reconciled counts and Iceberg snapshots |
 
@@ -50,5 +51,8 @@ published version.
 
 Review count is not sales, ratings 1–2 are not a text-sentiment model, and
 product price is a metadata snapshot rather than a review-time price. The
+Sentiment tab states the model's measured agreement and that `neutral` is
+weak; the product ranking uses the whole published dataset, not the selected
+period. The
 unmatched-product count and group remain visible instead of silently discarding
 reviews without matched product metadata.

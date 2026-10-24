@@ -7,8 +7,10 @@ from gold.build_product_review_gold import (
     PRODUCT_GOLD,
     build_category_rating_metrics,
     build_monthly_metrics,
+    build_monthly_sentiment_metrics,
     build_product_metrics,
     build_product_monthly_metrics,
+    build_product_sentiment_metrics,
     build_quality_summary,
     create_gold_tables,
 )
@@ -139,6 +141,64 @@ class SimpleGoldJobTests(unittest.TestCase):
             if row.product_group == "UNMATCHED_PRODUCT" and row.rating == 1
         ][0]
         self.assertEqual(unmatched.group_review_count, 2)
+
+    def sentiment_inputs(self):
+        reviews = self.spark.createDataFrame([
+            ("r1", "P1", datetime.datetime(2023, 1, 1), 5.0),
+            ("r2", "P1", datetime.datetime(2023, 1, 9), 5.0),
+            ("r3", "P1", datetime.datetime(2023, 1, 20), 1.0),
+            ("r4", "P2", datetime.datetime(2023, 2, 1), 3.0),
+            ("r5", "P2", datetime.datetime(2023, 2, 2), 4.0),
+        ], (
+            "record_id string, parent_asin string, reviewed_at timestamp, "
+            "rating double"
+        ))
+        sentiment = self.spark.createDataFrame([
+            ("r1", "positive"),
+            ("r2", "negative"),
+            ("r3", "positive"),
+            ("r4", "neutral"),
+        ], "review_record_id string, sentiment_label string")
+        return reviews, sentiment
+
+    def test_monthly_sentiment_counts_labels_and_disagreement(self):
+        reviews, sentiment = self.sentiment_inputs()
+
+        rows = (
+            build_monthly_sentiment_metrics(reviews, sentiment)
+            .orderBy("review_month")
+            .collect()
+        )
+
+        self.assertEqual(len(rows), 2)
+        january, february = rows
+        self.assertEqual(january.review_count, 3)
+        self.assertEqual(january.scored_review_count, 3)
+        self.assertEqual(january.positive_count, 2)
+        self.assertEqual(january.negative_count, 1)
+        self.assertEqual(january.high_rating_negative_count, 1)
+        self.assertEqual(january.low_rating_positive_count, 1)
+        self.assertAlmostEqual(january.positive_rate, 2 / 3)
+        # r5 has no score yet: counted as a review, left out of the rates.
+        self.assertEqual(february.review_count, 2)
+        self.assertEqual(february.scored_review_count, 1)
+        self.assertAlmostEqual(february.neutral_rate, 1.0)
+
+    def test_product_sentiment_has_one_row_per_product(self):
+        reviews, sentiment = self.sentiment_inputs()
+
+        rows = {
+            row.parent_asin: row
+            for row in build_product_sentiment_metrics(
+                reviews, sentiment
+            ).collect()
+        }
+
+        self.assertEqual(set(rows), {"P1", "P2"})
+        self.assertEqual(rows["P1"].review_count, 3)
+        self.assertAlmostEqual(rows["P1"].negative_rate, 1 / 3)
+        self.assertEqual(rows["P2"].scored_review_count, 1)
+        self.assertEqual(rows["P2"].high_rating_negative_count, 0)
 
     def test_quality_status_counts_are_not_inflated_by_multiple_issues(self):
         reviews = self.spark.createDataFrame([

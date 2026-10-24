@@ -43,6 +43,12 @@ CPU. The model is downloaded on first use into the `hf_cache` volume.
 
 `SENTIMENT_MAX_ROWS` limits a trial run to that many unscored reviews.
 
+## Downstream
+
+Gold aggregates the labels into `monthly_sentiment_metrics` and
+`product_sentiment_metrics` (`docs/gold_contract.md`); both are published to
+Serving and shown in the dashboard's Sentiment tab.
+
 ## Measured speed and quality
 
 Measured on an RTX 4050 Laptop GPU (6 GiB) on 23/10/2026, outside the pipeline:
