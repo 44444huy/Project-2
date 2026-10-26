@@ -1,0 +1,12 @@
+# GPU for the Airflow scheduler, where LocalExecutor runs the sentiment task.
+# Use it together with the main file on a machine with an NVIDIA GPU:
+#   docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d airflow-scheduler
+services:
+  airflow-scheduler:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

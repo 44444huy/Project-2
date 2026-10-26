@@ -166,10 +166,20 @@ def download_source(source, output, chunk_bytes, max_bytes_per_second=0):
         temporary_path.unlink(missing_ok=True)
         part_lines = 0
         part_bytes = 0
+        truncated_at = None
         compressed = gzip.open(temporary_path, "wb", compresslevel=1)
         try:
             for raw_line in response:
                 limiter.consume(len(raw_line))
+                # A line without a newline is only complete at the verified end
+                # of the source; otherwise the stream was cut mid-line, and the
+                # next run must resume from the start of this line.
+                if not raw_line.endswith(b"\n") and (
+                    total_bytes is None
+                    or state["next_byte_offset"] + len(raw_line) != total_bytes
+                ):
+                    truncated_at = state["next_byte_offset"]
+                    break
                 compressed.write(raw_line)
                 line_bytes = len(raw_line)
                 part_lines += 1
@@ -207,6 +217,11 @@ def download_source(source, output, chunk_bytes, max_bytes_per_second=0):
         else:
             temporary_path.unlink(missing_ok=True)
 
+    if truncated_at is not None:
+        raise RuntimeError(
+            f"{source['name']}: stream ended mid-line at byte {truncated_at}; "
+            "rerun to resume from the start of that line"
+        )
     if total_bytes is not None and state["next_byte_offset"] != total_bytes:
         raise RuntimeError(
             f"{source['name']}: received {state['next_byte_offset']} of "

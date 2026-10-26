@@ -12,11 +12,14 @@ ICEBERG_TABLES = [
     "polaris.silver.products",
     "polaris.silver.rejected_rows",
     "polaris.silver.review_product",
+    "polaris.silver.review_sentiment",
     "polaris.gold.monthly_review_metrics",
     "polaris.gold.product_review_metrics",
     "polaris.gold.product_monthly_review_metrics",
     "polaris.gold.category_rating_metrics",
     "polaris.gold.data_quality_summary",
+    "polaris.gold.monthly_sentiment_metrics",
+    "polaris.gold.product_sentiment_metrics",
 ]
 
 SERVING_TABLES = [
@@ -25,6 +28,8 @@ SERVING_TABLES = [
     "serving.product_monthly_review_metrics",
     "serving.category_rating_metrics",
     "serving.data_quality_summary",
+    "serving.monthly_sentiment_metrics",
+    "serving.product_sentiment_metrics",
 ]
 
 

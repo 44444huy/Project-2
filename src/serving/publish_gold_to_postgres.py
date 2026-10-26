@@ -22,7 +22,19 @@ TABLES = {
     ),
     "polaris.gold.category_rating_metrics": "serving.category_rating_metrics",
     "polaris.gold.data_quality_summary": "serving.data_quality_summary",
+    "polaris.gold.monthly_sentiment_metrics": "serving.monthly_sentiment_metrics",
+    "polaris.gold.product_sentiment_metrics": "serving.product_sentiment_metrics",
 }
+
+SENTIMENT_SUM_COLUMNS = [
+    "review_count",
+    "scored_review_count",
+    "positive_count",
+    "neutral_count",
+    "negative_count",
+    "high_rating_negative_count",
+    "low_rating_positive_count",
+]
 
 PUBLISH_LOCK_SQL = (
     "SELECT pg_advisory_lock(hashtext('product-review-serving-publish'))"
@@ -69,6 +81,14 @@ RECONCILIATION_RULES = {
     "polaris.gold.data_quality_summary": {
         "key_columns": ["source_name", "metric_type", "metric_name"],
         "sum_columns": ["row_count"],
+    },
+    "polaris.gold.monthly_sentiment_metrics": {
+        "key_columns": ["review_month"],
+        "sum_columns": SENTIMENT_SUM_COLUMNS,
+    },
+    "polaris.gold.product_sentiment_metrics": {
+        "key_columns": ["parent_asin"],
+        "sum_columns": SENTIMENT_SUM_COLUMNS,
     },
 }
 
@@ -203,6 +223,12 @@ def staging_optimization_statements(staged_tables):
     )
     category = quote_table(staged_tables["serving.category_rating_metrics"])
     quality = quote_table(staged_tables["serving.data_quality_summary"])
+    monthly_sentiment = quote_table(
+        staged_tables["serving.monthly_sentiment_metrics"]
+    )
+    product_sentiment = quote_table(
+        staged_tables["serving.product_sentiment_metrics"]
+    )
 
     statements = [
         "CREATE EXTENSION IF NOT EXISTS pg_trgm",
@@ -216,6 +242,12 @@ def staging_optimization_statements(staged_tables):
         f"CREATE UNIQUE INDEX ON {category} (product_group, rating)",
         f"CREATE UNIQUE INDEX ON {quality} "
         "(source_name, metric_type, metric_name)",
+        f"CREATE UNIQUE INDEX ON {monthly_sentiment} (review_month)",
+        f"CREATE UNIQUE INDEX ON {product_sentiment} (parent_asin)",
+        # The dashboard ranks products by the share of negative text among
+        # products with enough scored reviews.
+        f"CREATE INDEX ON {product_sentiment} "
+        "(negative_rate DESC, scored_review_count)",
     ]
     statements.extend(
         f"ANALYZE {table_name}"
@@ -225,6 +257,8 @@ def staging_optimization_statements(staged_tables):
             product_monthly,
             category,
             quality,
+            monthly_sentiment,
+            product_sentiment,
         )
     )
     return statements

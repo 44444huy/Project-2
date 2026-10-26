@@ -7,12 +7,29 @@ REVIEWS_SILVER = "polaris.silver.reviews"
 PRODUCTS_SILVER = "polaris.silver.products"
 REJECTED_SILVER = "polaris.silver.rejected_rows"
 REVIEW_PRODUCT_SILVER = "polaris.silver.review_product"
+SENTIMENT_SILVER = "polaris.silver.review_sentiment"
 
 MONTHLY_GOLD = "polaris.gold.monthly_review_metrics"
 PRODUCT_GOLD = "polaris.gold.product_review_metrics"
 PRODUCT_MONTHLY_GOLD = "polaris.gold.product_monthly_review_metrics"
 CATEGORY_GOLD = "polaris.gold.category_rating_metrics"
 QUALITY_GOLD = "polaris.gold.data_quality_summary"
+MONTHLY_SENTIMENT_GOLD = "polaris.gold.monthly_sentiment_metrics"
+PRODUCT_SENTIMENT_GOLD = "polaris.gold.product_sentiment_metrics"
+
+SENTIMENT_LABELS = ("positive", "neutral", "negative")
+SENTIMENT_COUNT_COLUMNS = [
+    "review_count",
+    "scored_review_count",
+    *[f"{label}_count" for label in SENTIMENT_LABELS],
+    "high_rating_negative_count",
+    "low_rating_positive_count",
+]
+SENTIMENT_RATE_COLUMNS = [
+    *[f"{label}_rate" for label in SENTIMENT_LABELS],
+    "high_rating_negative_rate",
+    "low_rating_positive_rate",
+]
 
 
 def safe_rate(numerator, denominator):
@@ -237,6 +254,91 @@ def build_category_rating_metrics(review_product_df):
     )
 
 
+def reviews_with_sentiment(reviews_df, sentiment_df):
+    # Left join so a review without a score still counts in review_count;
+    # the rates use scored reviews only.
+    labels = sentiment_df.select(
+        F.col("review_record_id").alias("record_id"),
+        "sentiment_label",
+    )
+    return reviews_df.join(labels, on="record_id", how="left")
+
+
+def sentiment_aggregations():
+    label = F.col("sentiment_label")
+    return [
+        F.count("*").alias("review_count"),
+        F.count(label).alias("scored_review_count"),
+        *[
+            F.count_if(label == name).alias(f"{name}_count")
+            for name in SENTIMENT_LABELS
+        ],
+        # Text that disagrees with the stars: 4-5 stars but negative text, or
+        # 1-2 stars but positive text.
+        F.count_if((F.col("rating") >= 4) & (label == "negative")).alias(
+            "high_rating_negative_count"
+        ),
+        F.count_if((F.col("rating") <= 2) & (label == "positive")).alias(
+            "low_rating_positive_count"
+        ),
+        F.avg("rating").alias("average_rating"),
+    ]
+
+
+def with_sentiment_rates(grouped):
+    scored = F.col("scored_review_count")
+    for name in SENTIMENT_LABELS:
+        grouped = grouped.withColumn(
+            f"{name}_rate", safe_rate(F.col(f"{name}_count"), scored)
+        )
+    return (
+        grouped
+        .withColumn(
+            "high_rating_negative_rate",
+            safe_rate(F.col("high_rating_negative_count"), scored),
+        )
+        .withColumn(
+            "low_rating_positive_rate",
+            safe_rate(F.col("low_rating_positive_count"), scored),
+        )
+        .withColumn("gold_updated_at", F.current_timestamp())
+    )
+
+
+def build_monthly_sentiment_metrics(reviews_df, sentiment_df):
+    grouped = (
+        reviews_with_sentiment(reviews_df, sentiment_df)
+        .withColumn(
+            "review_month",
+            F.date_trunc("month", "reviewed_at").cast("date"),
+        )
+        .groupBy("review_month")
+        .agg(*sentiment_aggregations())
+    )
+    return with_sentiment_rates(grouped).select(
+        "review_month",
+        *SENTIMENT_COUNT_COLUMNS,
+        *SENTIMENT_RATE_COLUMNS,
+        "average_rating",
+        "gold_updated_at",
+    )
+
+
+def build_product_sentiment_metrics(reviews_df, sentiment_df):
+    grouped = (
+        reviews_with_sentiment(reviews_df, sentiment_df)
+        .groupBy("parent_asin")
+        .agg(*sentiment_aggregations())
+    )
+    return with_sentiment_rates(grouped).select(
+        "parent_asin",
+        *SENTIMENT_COUNT_COLUMNS,
+        *SENTIMENT_RATE_COLUMNS,
+        "average_rating",
+        "gold_updated_at",
+    )
+
+
 def status_metrics(dataframe, source_name):
     return (
         dataframe
@@ -400,6 +502,37 @@ def create_gold_tables(spark):
         ) USING iceberg TBLPROPERTIES ('format-version' = '2')
     """)
 
+    sentiment_columns = """
+            review_count BIGINT NOT NULL,
+            scored_review_count BIGINT NOT NULL,
+            positive_count BIGINT NOT NULL,
+            neutral_count BIGINT NOT NULL,
+            negative_count BIGINT NOT NULL,
+            high_rating_negative_count BIGINT NOT NULL,
+            low_rating_positive_count BIGINT NOT NULL,
+            positive_rate DOUBLE NOT NULL,
+            neutral_rate DOUBLE NOT NULL,
+            negative_rate DOUBLE NOT NULL,
+            high_rating_negative_rate DOUBLE NOT NULL,
+            low_rating_positive_rate DOUBLE NOT NULL,
+            average_rating DOUBLE,
+            gold_updated_at TIMESTAMP NOT NULL
+    """
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {MONTHLY_SENTIMENT_GOLD} (
+            review_month DATE NOT NULL,
+            {sentiment_columns}
+        ) USING iceberg TBLPROPERTIES ('format-version' = '2')
+    """)
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {PRODUCT_SENTIMENT_GOLD} (
+            parent_asin STRING NOT NULL,
+            {sentiment_columns}
+        ) USING iceberg TBLPROPERTIES ('format-version' = '2')
+    """)
+
 
 def overwrite_table(spark, dataframe, table_name, view_name):
     dataframe.createOrReplaceTempView(view_name)
@@ -415,12 +548,15 @@ def main():
         products = spark.table(PRODUCTS_SILVER)
         rejected = spark.table(REJECTED_SILVER)
         review_product = spark.table(REVIEW_PRODUCT_SILVER)
+        sentiment = spark.table(SENTIMENT_SILVER)
 
         monthly = build_monthly_metrics(reviews)
         product = build_product_metrics(reviews, products)
         product_monthly = build_product_monthly_metrics(reviews)
         category = build_category_rating_metrics(review_product)
         quality = build_quality_summary(reviews, products, rejected)
+        monthly_sentiment = build_monthly_sentiment_metrics(reviews, sentiment)
+        product_sentiment = build_product_sentiment_metrics(reviews, sentiment)
 
         create_gold_tables(spark)
         overwrite_table(spark, monthly, MONTHLY_GOLD, "incoming_monthly_gold")
@@ -433,18 +569,37 @@ def main():
         )
         overwrite_table(spark, category, CATEGORY_GOLD, "incoming_category_gold")
         overwrite_table(spark, quality, QUALITY_GOLD, "incoming_quality_gold")
+        overwrite_table(
+            spark,
+            monthly_sentiment,
+            MONTHLY_SENTIMENT_GOLD,
+            "incoming_monthly_sentiment_gold",
+        )
+        overwrite_table(
+            spark,
+            product_sentiment,
+            PRODUCT_SENTIMENT_GOLD,
+            "incoming_product_sentiment_gold",
+        )
 
         monthly_table = spark.table(MONTHLY_GOLD)
         product_table = spark.table(PRODUCT_GOLD)
         product_monthly_table = spark.table(PRODUCT_MONTHLY_GOLD)
         category_table = spark.table(CATEGORY_GOLD)
         quality_table = spark.table(QUALITY_GOLD)
+        monthly_sentiment_table = spark.table(MONTHLY_SENTIMENT_GOLD)
+        product_sentiment_table = spark.table(PRODUCT_SENTIMENT_GOLD)
 
         print("Gold monthly rows:", monthly_table.count())
         print("Gold product rows:", product_table.count())
         print("Gold product-month rows:", product_monthly_table.count())
         print("Gold category-rating rows:", category_table.count())
         print("Gold quality rows:", quality_table.count())
+        print("Gold monthly sentiment rows:", monthly_sentiment_table.count())
+        print("Gold product sentiment rows:", product_sentiment_table.count())
+        monthly_sentiment_table.agg(
+            *[F.sum(column).alias(column) for column in SENTIMENT_COUNT_COLUMNS]
+        ).show(truncate=False)
         product_table.orderBy(
             F.desc("review_count"), "parent_asin"
         ).show(10, False)

@@ -19,10 +19,10 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn('max_active_runs=1', source)
         self.assertIn('max_active_tasks=1', source)
         self.assertIn(
-            'start >> schema_check >> bronze >> silver >> gold >> quality_guard',
+            'start >> schema_check >> bronze >> silver >> sentiment >> gold',
             source,
         )
-        self.assertIn('>> publish >> finalize', source)
+        self.assertIn('>> quality_guard >> publish >> finalize', source)
         self.assertIn(
             '"quality_guard": "/opt/project/src/operations/quality_guard.py"',
             source,
@@ -42,6 +42,7 @@ class AirflowContractTests(unittest.TestCase):
         self.assertIn("skip_on_exit_code=BLOCKED_EXIT_CODE", source)
         self.assertIn("BLOCKED_EXIT_CODE = 99", source)
         expected_applications = {
+            "sentiment": "src/sentiment/score_reviews.py",
             "bronze": "src/bronze/load_product_reviews_bronze.py",
             "silver": "src/silver/build_product_reviews_silver.py",
             "gold": "src/gold/build_product_review_gold.py",
@@ -92,8 +93,11 @@ class AirflowContractTests(unittest.TestCase):
         self.assertNotIn("data_survey", compose)
 
     def test_finalizer_covers_all_lakehouse_and_serving_tables(self):
-        self.assertEqual(len(ICEBERG_TABLES), 11)
-        self.assertEqual(len(SERVING_TABLES), 5)
+        self.assertEqual(len(ICEBERG_TABLES), 14)
+        self.assertIn("polaris.silver.review_sentiment", ICEBERG_TABLES)
+        self.assertIn("polaris.gold.product_sentiment_metrics", ICEBERG_TABLES)
+        self.assertEqual(len(SERVING_TABLES), 7)
+        self.assertIn("serving.monthly_sentiment_metrics", SERVING_TABLES)
         self.assertIn("polaris.bronze.reviews_raw", ICEBERG_TABLES)
         self.assertIn("polaris.gold.data_quality_summary", ICEBERG_TABLES)
         self.assertIn("serving.product_review_metrics", SERVING_TABLES)

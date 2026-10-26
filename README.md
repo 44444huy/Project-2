@@ -87,20 +87,25 @@ It writes:
 - `polaris.silver.reviews`;
 - `polaris.silver.products`;
 - `polaris.silver.rejected_rows`;
-- `polaris.silver.review_product`.
+- `polaris.silver.review_product`;
+- `polaris.silver.review_sentiment` (model label per review).
 - `polaris.gold.monthly_review_metrics`;
 - `polaris.gold.product_review_metrics`;
 - `polaris.gold.product_monthly_review_metrics`;
 - `polaris.gold.category_rating_metrics`;
-- `polaris.gold.data_quality_summary`.
+- `polaris.gold.data_quality_summary`;
+- `polaris.gold.monthly_sentiment_metrics`;
+- `polaris.gold.product_sentiment_metrics`.
 - `serving.monthly_review_metrics` in PostgreSQL;
 - `serving.product_review_metrics` in PostgreSQL;
 - `serving.product_monthly_review_metrics` in PostgreSQL;
 - `serving.category_rating_metrics` in PostgreSQL;
-- `serving.data_quality_summary` in PostgreSQL.
+- `serving.data_quality_summary` in PostgreSQL;
+- `serving.monthly_sentiment_metrics` in PostgreSQL;
+- `serving.product_sentiment_metrics` in PostgreSQL.
 
-The one-million-review run completed all stages and published the five Gold
-marts to PostgreSQL. See `docs/benchmark_1000000.md` for the current verified
+The one-million-review run completed all stages and published the Gold marts
+to PostgreSQL (five at the time; the two sentiment marts were added later). See `docs/benchmark_1000000.md` for the current verified
 results. `docs/benchmark_50000.md` is retained as an earlier scale-test record.
 
 ## Run
@@ -145,7 +150,7 @@ dashboard. One-shot setup services should finish with `Exited (0)`.
 
 Open Airflow at `http://localhost:8080`, sign in with the local credentials in
 `.env`, and trigger `product_review_lakehouse`. Its task order is
-`record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run`.
+`record_run_start -> schema_check -> bronze -> silver -> sentiment -> gold -> quality_guard -> publish -> finalize_run`.
 `schema_check` compares the Raw structure with the reviewed baseline
 before Bronze, and `quality_guard` compares Gold quality with the
 published version before Publish; see `docs/schema_gate.md` and
@@ -156,7 +161,7 @@ while each data task calls its Spark application directly with `spark-submit`.
 Each run is written to `serving.pipeline_runs` with its source and runtime
 configuration, code version, status, duration, reconciled table counts and
 current Iceberg snapshot IDs. Publish marks the displayed Serving version in
-the same PostgreSQL transaction that swaps all five live tables; finalization
+the same PostgreSQL transaction that swaps all seven live tables; finalization
 then marks the run successful.
 
 Airflow is the only supported pipeline entrypoint. Do not run individual data
@@ -165,7 +170,7 @@ logs and final reconciliation remain under one orchestrator. Rerunning the DAG
 is safe because Bronze uses an insert-only idempotent `MERGE`, Silver and Gold
 rebuild deterministically, and Publish replaces the complete Serving version.
 
-The publisher writes and reconciles all five staging tables before replacing
+The publisher writes and reconciles all seven staging tables before replacing
 the live Serving set in one PostgreSQL transaction. A rerun replaces rows; it
 does not append duplicates. See `docs/serving_contract.md` for the exact
 Serving and Iceberg transaction boundaries.

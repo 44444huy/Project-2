@@ -4,7 +4,7 @@
 run in dependency order:
 
 ```text
-record_run_start -> schema_check -> bronze -> silver -> gold -> quality_guard -> publish -> finalize_run
+record_run_start -> schema_check -> bronze -> silver -> sentiment -> gold -> quality_guard -> publish -> finalize_run
 ```
 
 The DAG allows one active run and one active task, so two Spark stages cannot
@@ -22,8 +22,8 @@ quality summary with the published version; in block mode it stops the run as
 source configuration, runtime configuration, code version and Airflow log URL.
 Any failed task changes that row to `FAILED` and records its error. Publish
 marks the row `PUBLISHED` inside the same PostgreSQL transaction that swaps the
-five live Serving tables. `finalize_run` then reconciles all eleven Iceberg tables
-and five Serving tables, records their row counts and current Iceberg snapshot
+seven live Serving tables. `finalize_run` then reconciles all fourteen Iceberg
+tables and seven Serving tables, records their row counts and current Iceberg snapshot
 IDs, and changes the status to `SUCCESS`.
 
 The verified one-million-review run completed successfully in 1,746.9 seconds.

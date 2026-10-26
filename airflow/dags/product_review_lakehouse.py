@@ -17,6 +17,7 @@ SPARK_APPLICATIONS = {
     "schema_check": "/opt/project/src/schema_evolution/check_raw_schema.py",
     "bronze": "/opt/project/src/bronze/load_product_reviews_bronze.py",
     "silver": "/opt/project/src/silver/build_product_reviews_silver.py",
+    "sentiment": "/opt/project/src/sentiment/score_reviews.py",
     "gold": "/opt/project/src/gold/build_product_review_gold.py",
     "quality_guard": "/opt/project/src/operations/quality_guard.py",
     "publish": "/opt/project/src/serving/publish_gold_to_postgres.py",
@@ -218,6 +219,7 @@ with DAG(
     )
     bronze = spark_task("bronze", SPARK_APPLICATIONS["bronze"])
     silver = spark_task("silver", SPARK_APPLICATIONS["silver"])
+    sentiment = spark_task("sentiment", SPARK_APPLICATIONS["sentiment"])
     gold = spark_task("gold", SPARK_APPLICATIONS["gold"])
     quality_guard = spark_task(
         "quality_guard",
@@ -237,6 +239,6 @@ with DAG(
     )
 
     (
-        start >> schema_check >> bronze >> silver >> gold >> quality_guard
-        >> publish >> finalize
+        start >> schema_check >> bronze >> silver >> sentiment >> gold
+        >> quality_guard >> publish >> finalize
     )
